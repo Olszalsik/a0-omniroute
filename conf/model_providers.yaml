@@ -1,0 +1,27 @@
+# Agent Zero model provider registration for OmniRoute (v2.5 schema).
+#
+# The v2.5 model_providers.yaml schema is:
+#   chat:
+#     <provider_id>:
+#       name: <UI label>
+#       litellm_provider: <openai | anthropic | ...>
+#       models_list:
+#         endpoint_url: <relative to api_base, or absolute URL>
+#       kwargs:
+#         api_base: <literal URL>          # NOT a template — must be a string
+#         api_key: <literal or env var ref>
+#
+# api_base is a literal URL. There is no {config.*} placeholder interpolation
+# in the v2.5 providers schema. The default points at host.docker.internal:8080
+# because Agent Zero runs in Docker and the OmniRoute gateway runs on the host.
+# To use a different URL, edit this file or set the OMNIROUTE_BASE_URL
+# environment variable AND update this file accordingly.
+
+chat:
+  omniroute:
+    name: OmniRoute Gateway
+    litellm_provider: openai
+    models_list:
+      endpoint_url: "/models"
+    kwargs:
+      api_base: "http://host.docker.internal:8080/v1"

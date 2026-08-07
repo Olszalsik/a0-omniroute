@@ -1,0 +1,63 @@
+# Default configuration for the OmniRoute plugin (v1.1.0 — v2.2 compatible).
+# This is the lowest-priority fallback. The Settings UI in the WebUI
+# (Settings -> Agent / External) writes user overrides to
+# usr/plugins/omniroute/config.json (or scoped config.json under
+# .a0proj/ when per_project_config / per_agent_config is enabled).
+
+# Base URL of the running OmniRoute instance.
+# Default is host.docker.internal:8080 because:
+#   1. Agent Zero runs in Docker, so localhost inside the container is the
+#      container itself, not the host. Use host.docker.internal to reach
+#      services on the host (Docker Desktop convention).
+#   2. Port 8080 is universally allowed by Windows Firewall/AV (the
+#      gateway's internal port 20128 is commonly blocked on Windows dev
+#      machines, symptom: "Empty reply from server" on curl.exe +
+#      ERR_SOCKET_NOT_CONNECTED in browsers). The PowerShell installer
+#      publishes host 8080 -> container 20128 (the upstream image's
+#      ENV PORT -- NOT 2012).
+# Override this via the Settings UI or by editing config.json.
+base_url: "http://host.docker.internal:8080/v1"
+
+# Optional API key. OmniRoute supports unauthenticated local mode;
+# only set this if you have configured OMNIROUTE_API_KEY on the server.
+api_key: ""
+
+# Default model exposed to Agent Zero's model picker when the user
+# selects the "OmniRoute (auto)" option. OmniRoute interprets
+# the special value "auto" by selecting the best provider from its
+# 4-tier fallback chain for each request.
+default_model: "auto"
+
+# HTTP timeout in seconds for requests to OmniRoute.
+# Kept low (30s) so a downed gateway fails fast and the upstream cascade
+# can cycle to a fallback model within the agent loop, instead of holding
+# the call_utility_model path for a full minute per attempt.
+timeout_seconds: 30
+
+# Whether to call OmniRoute's /v1/models at plugin load time to
+# pre-populate the model picker. Disable if OmniRoute is slow to start.
+preload_models: true
+
+# --- Use OmniRoute as a fallback model (v1.2.0 / B2) -------------------
+# One-click convenience: when enabled, the save_plugin_config hook
+# injects {"model": "omniroute/auto"} into the ACTIVE model preset's
+# chat and/or utility ``kwargs.fallbacks`` (the list the _model_fallback
+# cascade reads as candidate models). Unticking removes it. Idempotent.
+# The injected model is "omniroute/auto" (lets the gateway pick the
+# provider per request via its 4-tier internal fallback). To use a
+# different OmniRoute model id, edit the Fallback models row in the
+# model preset editor (_model_config) after toggling this on.
+# Both default off — opt-in. Requires the _model_config and _model_fallback
+# plugins; if either is absent the toggle is a no-op (never fails the save).
+use_as_fallback_chat: false
+use_as_fallback_utility: false
+
+# Maximum number of model names to surface in the WebUI status panel
+# (the full list is always available via GET /api/plugins/omniroute/models).
+max_models_in_status: 25
+
+# How long (seconds) a cached model snapshot is considered "fresh".
+# The dashboard always tries the live gateway first; this only controls
+# when the cache is treated as fresh vs. stale for advisory purposes
+# (e.g. the "cached N min ago" pill). 3600 = 1 hour.
+cache_ttl_seconds: 3600

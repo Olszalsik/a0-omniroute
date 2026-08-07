@@ -1,0 +1,23 @@
+# Preconfigured agent profile that ships with the OmniRoute plugin (v2.5 schema).
+#
+# The `prompts:` block below is the source of truth for OmniRoute routing
+# guidance. Per AGENTS.md, do NOT duplicate this guidance in the agent
+# `description` (that's what users see in the WebUI picker — keep it short
+# and human-readable) or in the system context. Skills are matched on
+# demand; this prompt ships with the agent and is always in context.
+#
+# After selecting this profile in the WebUI, choose `omniroute/auto` (or any
+# other omniroute/<model-id>) from the model picker to route through OmniRoute.
+
+title: OmniRoute Agent
+description: >-
+  A general-purpose agent whose LLM calls are routed through OmniRoute, a
+  local AI gateway that fans out to 230+ upstream providers with automatic
+  4-tier fallback (Subscription -> API Key -> Cheap -> Free) and token
+  compression. Use this profile when you want "always-online" behavior
+  without manually configuring API keys per provider.
+
+context: ''
+
+prompts:
+  main: prompts/main.md

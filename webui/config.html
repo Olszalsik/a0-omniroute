@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>OmniRoute Settings</title>
+  <script type="module">
+    import { store } from "/components/plugins/plugin-settings-store.js";
+  </script>
+  <script type="module" src="/plugins/omniroute/webui/omniroute-store.js"></script>
+  <style>
+    .omni-section {
+      background: rgba(127,127,127,0.05);
+      border: 1px solid rgba(127,127,127,0.15);
+      border-radius: 8px;
+      padding: 1em 1.2em;
+      margin-bottom: 1em;
+    }
+    .omni-section h4 {
+      margin: 0 0 0.4em 0;
+    }
+    .omni-section p {
+      margin: 0 0 0.6em 0;
+      opacity: 0.85;
+    }
+    .omni-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4em;
+      padding: 0.25em 0.8em;
+      border-radius: 999px;
+      font-size: 0.9em;
+      font-weight: 500;
+    }
+    .omni-status-pill.ok   { background: rgba(34, 197, 94, 0.18);  color: #22c55e; }
+    .omni-status-pill.bad  { background: rgba(239, 68, 68, 0.18);  color: #ef4444; }
+    .omni-status-pill.warn { background: rgba(234, 179, 8, 0.18);  color: #eab308; }
+    .omni-status-pill .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+
+    .omni-codeblock {
+      position: relative;
+      background: #0d1117;
+      color: #c9d1d9;
+      border-radius: 6px;
+      padding: 0.8em 1em;
+      margin: 0.5em 0;
+      max-height: 280px;
+      overflow: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.78em;
+      line-height: 1.45;
+      white-space: pre;
+    }
+    .omni-codeblock .copy-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      border-radius: 5px;
+      padding: 3px 10px;
+      font-size: 0.85em;
+      cursor: pointer;
+    }
+    .omni-codeblock .copy-btn:hover { background: #30363d; }
+    .omni-codeblock .copy-btn.copied { background: #238636; border-color: #238636; color: white; }
+
+    .omni-actions { display: flex; gap: 0.5em; flex-wrap: wrap; }
+    .omni-actions button { padding: 0.4em 0.9em; }
+
+    details.omni-advanced {
+      background: rgba(127,127,127,0.05);
+      border: 1px solid rgba(127,127,127,0.15);
+      border-radius: 8px;
+      padding: 0.5em 1em;
+      margin-top: 0.5em;
+    }
+    details.omni-advanced summary { cursor: pointer; font-weight: 500; padding: 0.3em 0; }
+    details.omni-advanced label { display: block; margin: 0.5em 0; }
+    details.omni-advanced label span { display: block; font-size: 0.85em; opacity: 0.8; margin-bottom: 0.2em; }
+    details.omni-advanced input { width: 100%; }
+
+    .omni-models-list {
+      max-height: 220px;
+      overflow-y: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.82em;
+      background: rgba(127,127,127,0.08);
+      border-radius: 6px;
+      padding: 0.5em 0.8em;
+    }
+    .omni-models-list div { padding: 0.1em 0; }
+    .omni-tier-tag {
+      display: inline-block;
+      margin-left: 0.5em;
+      padding: 0.05em 0.5em;
+      border-radius: 999px;
+      font-size: 0.78em;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      vertical-align: middle;
+    }
+    .omni-tier-tag.tier-free { background: rgba(34, 197, 94, 0.18);  color: #22c55e; }
+    .omni-tier-tag.tier-cheap { background: rgba(59, 130, 246, 0.18); color: #3b82f6; }
+    .omni-tier-tag.tier-key   { background: rgba(234, 179, 8, 0.18);  color: #eab308; }
+    .omni-tier-tag.tier-sub   { background: rgba(168, 85, 247, 0.18); color: #a855f7; }
+  </style>
+</head>
+<body>
+  <div x-data>
+    <template x-if="$store.omnirouteStore">
+      <div
+        x-init="$store.omnirouteStore.init(config, context)"
+        x-effect="$store.omnirouteStore.bindConfig(config)"
+        x-destroy="$store.omnirouteStore.cleanup()"
+      >
+
+        <!-- ================== STATUS HEADER ================== -->
+        <div style="display:flex; align-items:center; gap:0.8em; margin-bottom: 1em;">
+          <h3 style="margin:0; flex:1;">OmniRoute Gateway</h3>
+          <span
+            class="omni-status-pill"
+            :class="$store.omnirouteStore.installState === 'ready' ? 'ok' :
+                    ($store.omnirouteStore.installState === 'installing' ? 'warn' : 'bad')"
+          >
+            <span class="dot"></span>
+            <span x-text="$store.omnirouteStore.statusLabel"></span>
+          </span>
+          <button @click="$store.omnirouteStore.refresh()" :disabled="$store.omnirouteStore.busy">
+            <span x-show="!$store.omnirouteStore.busy">Re-detect</span>
+            <span x-show="$store.omnirouteStore.busy">Checking...</span>
+          </button>
+        </div>
+
+        <!-- ================== READY STATE ================== -->
+        <template x-if="$store.omnirouteStore.installState === 'ready'">
+          <div class="omni-section">
+            <h4>✓ Gateway is online</h4>
+            <p x-text="`Connected to ${$store.omnirouteStore.status?.base_url} — ${$store.omnirouteStore.status?.provider_count ?? 0} models available`"></p>
+            <div class="omni-actions">
+              <button @click="$store.omnirouteStore.test()" :disabled="$store.omnirouteStore.busy">Send test call</button>
+              <!-- v2.6: tier filter moved here from the chat input / page-head extensions after user feedback. Self-contained Alpine component hits /api/plugins/omniroute/models directly with tier + filter. State is independent of $store.omnirouteStore so the dashboard's filter is unaffected. -->
+<div x-data="omniSettingsTierFilter()" x-init="load()" style="margin-top:0.6em; margin-bottom:0.6em; padding:0.6em; background:rgba(127,127,127,0.05); border:1px solid rgba(127,127,127,0.15); border-radius:6px;">
+<div style="display:flex; align-items:center; gap:0.4em; flex-wrap:wrap; font-size:0.85em;">
+<span style="opacity:0.85;">Tier filter:</span>
+<select x-model="tier" @change="load()" :disabled="busy"
+style="background:rgba(127,127,127,0.08);color:inherit;border:1px solid rgba(127,127,127,0.25);border-radius:4px;padding:2px 6px;">
+<option value="">All tiers</option>
+<option value="free">Free only</option>
+<option value="cheap">Cheap only</option>
+<option value="key">Key required</option>
+<option value="sub">Subscription</option>
+</select>
+<input x-model="search" @input.debounce.250ms="load()" placeholder="Search models…"
+style="background:rgba(127,127,127,0.08);color:inherit;border:1px solid rgba(127,127,127,0.25);border-radius:4px;padding:2px 6px;font-size:0.85em;min-width:8em;" />
+<button @click="load()" :disabled="busy"
+style="padding:2px 10px;border-radius:4px;border:1px solid rgba(127,127,127,0.3);background:rgba(127,127,127,0.1);color:inherit;cursor:pointer;font-size:0.85em;">
+<span x-show="!busy">Refresh</span>
+<span x-show="busy">Loading…</span>
+</button>
+<span style="font-size:0.8em; opacity:0.7;" x-text="summary"></span>
+</div>
+<div x-show="items.length > 0" class="omni-models-list" style="margin-top:0.5em; max-height:180px;">
+<template x-for="m in items" :key="m.id">
+<div>
+<span x-text="m.id"></span>
+<span class="omni-tier-tag" :class="'tier-' + (m.tier || 'sub')" x-text="m.tier || 'sub'"></span>
+</div>
+</template>
+</div>
+<div x-show="lastError" style="margin-top:0.4em;font-size:0.78em;opacity:0.75;" x-text="`Last error: ${lastError}`"></div>
+</div>
+<button @click="$store.omnirouteStore.loadModels()" :disabled="$store.omnirouteStore.busy">Load model list</button>
+              <button @click="$store.omnirouteStore.uninstallGateway()"
+                      :disabled="$store.omnirouteStore.busy || $store.omnirouteStore.uninstalling"
+                      title="Download uninstall-omniroute.ps1 and remove the Docker container. The plugin stays installed."
+                      style="margin-left:auto;">
+                <span x-show="!$store.omnirouteStore.uninstalling">Remove OmniRoute gateway</span>
+                <span x-show="$store.omnirouteStore.uninstalling">Removing…</span>
+              </button>
+            </div>
+            <div x-show="$store.omnirouteStore.models.length" class="omni-models-list" style="margin-top:0.6em;">
+              <template x-for="m in $store.omnirouteStore.models" :key="m.id">
+                <div>
+                  <span x-text="m.id"></span>
+                  <span class="omni-tier-tag" :class="'tier-' + (m.tier || 'sub')" x-text="m.tier || 'sub'"></span>
+                </div>
+              </template>
+            </div>
+            <div x-show="$store.omnirouteStore.models.length === 0 && $store.omnirouteStore._lastModelsResponse" style="margin-top:0.6em; padding:0.5em 0.8em; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:6px;">
+              <strong>Load model list returned 0 models.</strong>
+              <p style="margin:0.3em 0; font-size:0.85em; opacity:0.85;">This usually means the API call succeeded but the response had no items, or the JSON was unexpected. Raw response:</p>
+              <pre style="margin:0.3em 0 0 0; font-size:0.75em; white-space:pre-wrap; max-height:200px; overflow:auto;"
+                   x-text="JSON.stringify($store.omnirouteStore._lastModelsResponse, null, 2)"></pre>
+            </div>
+            <div x-show="$store.omnirouteStore.testResult" style="margin-top:0.6em; padding:0.5em 0.8em; background:rgba(127,127,127,0.08); border-radius:6px;">
+              <strong>Last test call:</strong>
+              <pre style="margin:0.3em 0 0 0; font-size:0.8em; white-space:pre-wrap;"
+                   x-text="JSON.stringify($store.omnirouteStore.testResult, null, 2)"></pre>
+            </div>
+          </div>
+        </template>
+
+        <!-- ================== INSTALL STATE ================== -->
+        <template x-if="$store.omnirouteStore.installState !== 'ready'">
+          <div>
+            <div class="omni-section">
+              <h4>Step 1 of 2 — Install OmniRoute on your Windows host</h4>
+              <p>
+                Click <strong>Download &amp; run installer</strong> below. It downloads
+                <code>install-omniroute.ps1</code> — double-click the file, confirm
+                the UAC prompt, and wait ~30 s. The script installs OmniRoute as a
+                Docker container with auto-start, then verifies the gateway is
+                responding.
+              </p>
+              <p style="font-size:0.85em; opacity:0.8;">
+                Need to install Docker Desktop first? Get it from
+                <a href="https://www.docker.com/products/docker-desktop/" target="_blank" rel="noopener">docker.com</a>.
+                During install, leave <em>Start Docker Desktop at logon</em> enabled
+                (the default) — that's what makes the gateway come back automatically
+                after a Windows reboot.
+              </p>
+              <div class="omni-actions" style="margin-top:0.6em;">
+                <button class="primary"
+                        @click="$store.omnirouteStore.recoverGateway()"
+                        :disabled="$store.omnirouteStore.recovering || $store.omnirouteStore.busy">
+                  <span x-show="!$store.omnirouteStore.recovering">Download &amp; run installer</span>
+                  <span x-show="$store.omnirouteStore.recovering">Waiting for host…</span>
+                </button>
+                <button @click="$store.omnirouteStore.refresh()"
+                        :disabled="$store.omnirouteStore.busy || $store.omnirouteStore.recovering">
+                  <span x-show="!$store.omnirouteStore.busy">Re-detect</span>
+                  <span x-show="$store.omnirouteStore.busy">Checking…</span>
+                </button>
+              </div>
+              <p x-show="$store.omnirouteStore.recovering" style="margin-top:0.6em; font-size:0.85em; opacity:0.85;">
+                Status will refresh in ~60 s. If the install doesn't appear in your
+                downloads, check that the browser isn't blocking the file.
+              </p>
+              <details style="margin-top:0.8em;">
+                <summary style="cursor:pointer; opacity:0.8;">Show full install script (manual paste)</summary>
+                <p style="margin-top:0.6em; font-size:0.85em; opacity:0.75;">
+                  Same script as above, in case the download doesn't work. Click
+                  <strong>Copy</strong>, then paste into a Windows PowerShell window
+                  (run as Administrator for <code>docker run</code>).
+                </p>
+                <div class="omni-codeblock" x-ref="installScript" style="max-height:360px;">
+                  <button class="copy-btn"
+                          @click="$store.omnirouteStore.copyToClipboard($refs.installScript, $event)">
+                    Copy
+                  </button>
+                  <code x-text="$store.omnirouteStore.installScript"></code>
+                </div>
+              </details>
+            </div>
+
+            <div class="omni-section">
+              <h4>Step 2 of 2 — Verify</h4>
+              <p>
+                After the script finishes, the pill above will turn green within
+                ~60 s automatically. If it doesn't, click <strong>Re-detect</strong>
+                (or refresh the page).
+              </p>
+              <p x-show="$store.omnirouteStore.status?.error" style="opacity:0.8;">
+                Last error: <code x-text="$store.omnirouteStore.status?.error"></code>
+              </p>
+            </div>
+          </div>
+        </template>
+
+        <!-- ================== ADVANCED ================== -->
+        <details class="omni-advanced">
+          <summary>Advanced settings</summary>
+          <p style="font-size:0.85em; opacity:0.75; margin-top:0.6em;">
+            The plugin autodetects the gateway on common Docker-to-host addresses
+            (host.docker.internal, 172.17.0.1, gateway.docker.internal). Override the URL
+            here if your setup is unusual.
+          </p>
+          <label>
+            <span>OmniRoute base URL</span>
+            <input x-model="config.base_url" placeholder="http://host.docker.internal:8080/v1" />
+          </label>
+          <label>
+            <span>API key (optional — only if OMNIROUTE_API_KEY is set on the server)</span>
+            <input type="password" x-model="config.api_key" placeholder="leave blank for unauthenticated local mode" />
+          </label>
+          <label>
+            <span>Default model</span>
+            <input x-model="config.default_model" placeholder="auto" />
+          </label>
+          <label>
+            <span>HTTP timeout (seconds)</span>
+            <input type="number" min="5" max="600" x-model.number="config.timeout_seconds" />
+          </label>
+          <label style="display:flex; align-items:center; gap:0.5em;">
+            <input type="checkbox" x-model="config.preload_models" />
+            <span>Preload model list on agent startup</span>
+          </label>
+          <div style="margin-top:0.8em; padding-top:0.6em; border-top:1px solid rgba(127,127,127,0.15);">
+            <strong style="font-size:0.9em;">Use OmniRoute as a fallback model</strong>
+            <p style="font-size:0.8em; opacity:0.75; margin:0.3em 0 0.6em 0;">
+              Adds <code>omniroute/auto</code> to the active model preset's fallback list
+              (the <em>_model_fallback</em> cascade tries it when the primary fails).
+              Requires the <em>_model_config</em> and <em>_model_fallback</em> plugins.
+              You can also edit fallbacks directly in the model preset editor.
+            </p>
+            <label style="display:flex; align-items:center; gap:0.5em;">
+              <input type="checkbox" x-model="config.use_as_fallback_chat" />
+              <span>Use as fallback for the Main (chat) model</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:0.5em; margin-top:0.4em;">
+              <input type="checkbox" x-model="config.use_as_fallback_utility" />
+              <span>Use as fallback for the Utility model</span>
+            </label>
+          </div>
+        </details>
+
+      </div>
+    </template>
+  </div>
+<!-- Tier filter Alpine factory (v2.6). Inlined because this is the only
+settings page that uses it; avoids polluting the global helper bundle.
+Mirrors the dashboard's tier select but lives in plugin Settings, as
+user requested ("tier dropdown belongs in plugin Settings + OmniRoute
+Dashboard, not in the chat input"). State is independent of
+$store.omnirouteStore so the dashboard's filter is unaffected. -->
+<script>
+function omniSettingsTierFilter() {
+  return {
+    tier: "",
+    search: "",
+    items: [],
+    busy: false,
+    lastError: "",
+    get summary() {
+      if (this.busy) return "Loading…";
+      if (this.lastError) return "";
+      return `${this.items.length} model(s)`;
+    },
+    async load() {
+      this.busy = true;
+      this.lastError = "";
+      try {
+        const r = await fetch("/api/plugins/omniroute/models", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filter: this.search || "",
+            tier: this.tier || "",
+          }),
+        });
+        const data = await r.json();
+        if (data.error) {
+          this.lastError = data.error;
+          this.items = [];
+          return;
+        }
+        // Prefer `filtered` (server-applied filter + tier), fall back
+        // to `models` if the backend doesn't return `filtered`.
+        this.items = data.filtered || data.models || [];
+      } catch (e) {
+        this.lastError = String(e);
+        this.items = [];
+      } finally {
+        this.busy = false;
+      }
+    },
+  };
+}
+if (window.Alpine && typeof window.Alpine.data === "function") {
+  window.Alpine.data("omniSettingsTierFilter", omniSettingsTierFilter);
+} else {
+  document.addEventListener(
+    "alpine:init",
+    function () {
+      window.Alpine.data("omniSettingsTierFilter", omniSettingsTierFilter);
+    },
+    { once: true }
+  );
+}
+</script>
+</body>
+</html>

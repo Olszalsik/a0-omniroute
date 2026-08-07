@@ -1,0 +1,28 @@
+# --- Personal / runtime config (NEVER published) ---------------------------
+# The plugin's per-install runtime config lives in config.json; defaults ship
+# as default_config.yaml. config.json holds base_url, api_key, models_cache,
+# last_known, and the B2 fallback toggles — all machine/personal state.
+config.json
+config.json.before-*.bak
+execute_record.json
+
+# --- Local pre-edit backups -------------------------------------------------
+*.bak
+*.before-*.bak
+
+# --- Runtime toggle / disabled-flag state -----------------------------------
+.toggle-*
+.disabled
+
+# --- Python caches ----------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- OS clutter -------------------------------------------------------------
+.DS_Store
+Thumbs.db

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OmniRoute Dashboard</title>
+  <link rel="stylesheet" href="/css/main.css" />
+  <script type="module">
+    import { store } from "/components/plugins/plugin-settings-store.js";
+  </script>
+  <script type="module" src="/usr/plugins/omniroute/webui/dashboard.js"></script>
+  <style>
+    :root {
+      --omni-bg: #0d1117;
+      --omni-panel: #161b22;
+      --omni-border: #30363d;
+      --omni-text: #c9d1d9;
+      --omni-muted: #8b949e;
+      --omni-amber: #d4a574;
+      --omni-green: #22c55e;
+      --omni-red: #ef4444;
+      --omni-yellow: #fbbf24;
+    }
+    body { background: var(--omni-bg); color: var(--omni-text); margin: 0; font-family: system-ui, -apple-system, sans-serif; }
+    .omni-page { max-width: 1100px; margin: 0 auto; padding: 1.5em; }
+    .omni-header { display: flex; align-items: center; gap: 1em; margin-bottom: 1.5em; }
+    .omni-header h1 { margin: 0; font-size: 1.6em; color: var(--omni-amber); }
+    .omni-pill { display: inline-flex; align-items: center; gap: 0.4em; padding: 0.3em 0.8em; border-radius: 999px; font-size: 0.88em; font-weight: 500; }
+    .omni-pill .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+    .omni-pill.ok   { background: rgba(34,197,94,0.15);  color: var(--omni-green); }
+    .omni-pill.bad  { background: rgba(239,68,68,0.15);  color: var(--omni-red); }
+    .omni-pill.warn { background: rgba(251,191,36,0.15); color: var(--omni-yellow); }
+
+    .omni-actions { margin-left: auto; display: flex; gap: 0.5em; }
+    .omni-actions button { padding: 0.45em 0.9em; border-radius: 5px; border: 1px solid var(--omni-border); background: var(--omni-panel); color: var(--omni-text); cursor: pointer; font-size: 0.88em; }
+    .omni-actions button:hover { background: #1f242c; }
+    .omni-actions button.primary { background: linear-gradient(180deg, rgba(180,130,60,0.25) 0%, rgba(140,90,30,0.3) 100%); border-color: var(--omni-amber); color: var(--omni-amber); }
+
+    .omni-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1em; margin-bottom: 1.5em; }
+    .omni-card { background: var(--omni-panel); border: 1px solid var(--omni-border); border-radius: 8px; padding: 1em; }
+    .omni-card h3 { margin: 0 0 0.4em 0; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.06em; color: var(--omni-muted); font-weight: 600; }
+    .omni-card .big-num { font-size: 2.2em; font-weight: 700; color: var(--omni-amber); line-height: 1; }
+    .omni-card .sub { font-size: 0.85em; color: var(--omni-muted); margin-top: 0.2em; }
+
+    .omni-section { background: var(--omni-panel); border: 1px solid var(--omni-border); border-radius: 8px; padding: 1em 1.2em; margin-bottom: 1em; }
+    .omni-section h2 { margin: 0 0 0.6em 0; font-size: 1.05em; color: var(--omni-amber); display: flex; align-items: center; gap: 0.5em; }
+    .omni-section h2 small { font-size: 0.7em; color: var(--omni-muted); font-weight: normal; margin-left: auto; }
+
+    .tier-bar { display: flex; height: 28px; border-radius: 6px; overflow: hidden; margin-bottom: 0.6em; background: rgba(255,255,255,0.05); }
+    .tier-bar > div { display: flex; align-items: center; justify-content: center; font-size: 0.78em; font-weight: 600; color: white; transition: width 0.3s ease; }
+    .tier-bar .tier-free   { background: #22c55e; }
+    .tier-bar .tier-cheap  { background: #3b82f6; }
+    .tier-bar .tier-key    { background: #a855f7; }
+    .tier-bar .tier-sub    { background: #f59e0b; }
+    .tier-legend { display: flex; gap: 1em; flex-wrap: wrap; font-size: 0.85em; }
+    .tier-legend > span { display: flex; align-items: center; gap: 0.4em; color: var(--omni-muted); }
+    .tier-legend .swatch { width: 10px; height: 10px; border-radius: 2px; }
+
+    .omni-filter { display: flex; gap: 0.5em; margin-bottom: 0.6em; }
+    .omni-filter input { flex: 1; background: var(--omni-bg); border: 1px solid var(--omni-border); border-radius: 5px; padding: 0.4em 0.7em; color: var(--omni-text); font-size: 0.88em; }
+    .omni-filter select { background: var(--omni-bg); border: 1px solid var(--omni-border); border-radius: 5px; padding: 0.4em 0.5em; color: var(--omni-text); font-size: 0.85em; }
+    .omni-filter label { display: flex; align-items: center; gap: 0.3em; font-size: 0.85em; color: var(--omni-muted); }
+
+    .model-table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+    .model-table th { text-align: left; padding: 0.4em 0.6em; color: var(--omni-muted); font-weight: 600; border-bottom: 1px solid var(--omni-border); position: sticky; top: 0; background: var(--omni-panel); }
+    .model-table td { padding: 0.35em 0.6em; border-bottom: 1px solid rgba(255,255,255,0.04); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .model-table tr:hover td { background: rgba(180,130,60,0.08); }
+    .model-table .tier-badge { display: inline-block; padding: 0.05em 0.4em; border-radius: 3px; font-size: 0.7em; font-weight: 700; font-family: system-ui; }
+    .tier-badge.free  { background: rgba(34,197,94,0.2);  color: var(--omni-green); }
+    .tier-badge.cheap { background: rgba(59,130,246,0.2); color: #60a5fa; }
+    .tier-badge.key   { background: rgba(168,85,247,0.2); color: #c084fc; }
+    .tier-badge.sub   { background: rgba(245,158,11,0.2); color: #fbbf24; }
+
+    .model-scroll { max-height: 400px; overflow-y: auto; border: 1px solid var(--omni-border); border-radius: 5px; }
+
+    .omni-empty { padding: 1.5em; text-align: center; color: var(--omni-muted); }
+    .omni-empty button { margin-top: 0.8em; }
+  </style>
+</head>
+<body>
+  <div class="omni-page" x-data="omnirouteDashboard()" x-init="init()">
+
+    <!-- Header -->
+    <div class="omni-header">
+      <a href="/" style="text-decoration:none;color:inherit;padding:4px 10px;border:1px solid #30363d;border-radius:5px;font-size:0.85em;margin-right:12px;">&larr; Back</a><h1>OmniRoute Dashboard</h1>
+      <span class="omni-pill" :class="reachable ? 'ok' : 'bad'">
+        <span class="dot"></span>
+        <span x-text="reachable ? `Online - ${modelCount} models` : 'Offline'"></span>
+      </span>
+      <span class="omni-pill warn" x-show="cachePill" x-text="cachePill" title="Showing data from the on-disk cache; live refresh failed."></span>
+      <div class="omni-actions">
+        <button @click="forceRefresh()" :disabled="busy" :title="busy ? 'Refreshing…' : (pendingIn > 0 ? `Wait ${pendingIn}s` : 'Fetch fresh data from the gateway')">
+          <span x-text="refreshLabel">Refresh</span>
+        </button>
+        <button x-show="!reachable && !busy" @click="recoverGateway()" :disabled="recovering" :title="recovering ? 'Waiting for host…' : 'Download the installer and run it on your host'">
+          <span x-show="!recovering">Start OmniRoute</span>
+          <span x-show="recovering">Waiting for host…</span>
+        </button>
+        <button x-show="reachable" @click="uninstallGateway()" :disabled="uninstalling" :title="uninstalling ? 'Removing…' : 'Download the uninstaller and remove the Docker container. The plugin stays installed.'">
+          <span x-show="!uninstalling">Remove gateway</span>
+          <span x-show="uninstalling">Removing…</span>
+        </button>
+        <button @click="openSettings()" class="primary">Settings</button>
+      </div>
+    </div>
+
+    <!-- Quick stats -->
+    <div class="omni-grid">
+      <div class="omni-card">
+        <h3>Models</h3>
+        <div class="big-num" x-text="modelCount"></div>
+        <div class="sub" x-text="`${freeCount} free / ${cheapCount} cheap / ${keyCount} key / ${subCount} subscription`"></div>
+      </div>
+      <div class="omni-card">
+        <h3>Latency</h3>
+        <div class="big-num" x-text="latency ? `${latency}ms` : '—'"></div>
+        <div class="sub" x-text="baseUrl"></div>
+        <div class="sub" x-show="lastKnownLabel" x-text="lastKnownLabel" style="color:var(--omni-yellow);margin-top:0.3em;"></div>
+      </div>
+      <div class="omni-card">
+        <h3>Mode</h3>
+        <div class="big-num" x-text="modeLabel" style="font-size:1.3em;"></div>
+        <div class="sub"><a href="#" @click.prevent="openSettings()">Change in settings →</a></div>
+      </div>
+    </div>
+
+    <!-- Tier breakdown -->
+    <div class="omni-section">
+      <h2>Tier breakdown <small x-text="`${modelCount} total`"></small></h2>
+      <div class="tier-bar">
+        <div class="tier-free"  :style="`width:${pctFree}%`"  x-text="freeCount  ? freeCount  : ''"></div>
+        <div class="tier-cheap" :style="`width:${pctCheap}%`" x-text="cheapCount ? cheapCount : ''"></div>
+        <div class="tier-key"   :style="`width:${pctKey}%`"   x-text="keyCount   ? keyCount   : ''"></div>
+        <div class="tier-sub"   :style="`width:${pctSub}%`"   x-text="subCount   ? subCount   : ''"></div>
+      </div>
+      <div class="tier-legend">
+        <span><span class="swatch" style="background:#22c55e;"></span> Free (auto, ddlgw, oc-*-free)</span>
+        <span><span class="swatch" style="background:#3b82f6;"></span> Cheap (low-cost paid)</span>
+        <span><span class="swatch" style="background:#a855f7;"></span> Key (API key required)</span>
+        <span><span class="swatch" style="background:#f59e0b;"></span> Subscription (account-based)</span>
+      </div>
+    </div>
+
+    <!-- Model list -->
+    <div class="omni-section">
+      <h2>Models <small x-text="`${filteredModels.length} of ${modelCount}`"></small></h2>
+      <div class="omni-filter">
+        <input x-model="search" placeholder="Search models (e.g. claude, gpt, free)..." />
+        <select x-model="tierFilter">
+          <option value="">All tiers</option>
+          <option value="free">Free only</option>
+          <option value="cheap">Cheap only</option>
+          <option value="key">Key only</option>
+          <option value="sub">Subscription only</option>
+        </select>
+        <label><input type="checkbox" x-model="freeOnly" /> Free only</label>
+      </div>
+      <div class="model-scroll" x-show="filteredModels.length">
+        <table class="model-table">
+          <thead>
+            <tr><th>ID</th><th>Tier</th><th style="width:60px;">Action</th></tr>
+          </thead>
+          <tbody>
+            <template x-for="m in filteredModels" :key="m.id">
+              <tr>
+                <td x-text="m.id"></td>
+                <td><span class="tier-badge" :class="m.tier" x-text="m.tier"></span></td>
+                <td><button @click="copyModel(m.id)" style="background:none;border:1px solid var(--omni-border);color:var(--omni-muted);padding:1px 6px;border-radius:3px;font-size:0.75em;cursor:pointer;" title="Copy model id">copy</button></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div class="omni-empty" x-show="!filteredModels.length && reachable">
+        No models match your filter.
+      </div>
+      <div class="omni-empty" x-show="!reachable">
+        Gateway is offline. Open <a href="#" @click.prevent="openSettings()">Settings</a> to install or re-detect.
+        <div x-show="lastError" style="margin-top:0.6em; padding:0.4em 0.6em; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:4px; font-size:0.78em; color:var(--omni-red); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all;">
+          <strong>Last error:</strong> <span x-text="lastError"></span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

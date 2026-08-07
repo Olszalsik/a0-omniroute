@@ -1,0 +1,17 @@
+<!--
+  OmniRoute page-head status - intentionally minimal in v2.0.0.
+  The main status surface is now the topbar button (chat-top-end/)
+  and the dashboard page. The page-head slot is kept as a thin,
+  non-blocking error indicator that only appears when the gateway
+  is completely unreachable AND the plugin is enabled.
+-->
+<script>
+  (function () {
+    if (window.__omnirouteStatusInjected) return;
+    window.__omnirouteStatusInjected = true;
+
+    // Silent: no UI. The topbar button and dashboard handle status.
+    // Keeping this file as a no-op so v2.0 can be rolled back to v1.2
+    // without leaving dangling extension points.
+  })();
+</script>
