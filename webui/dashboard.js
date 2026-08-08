@@ -26,7 +26,7 @@ import { toastFrontendError, toastFrontendInfo } from "/components/notifications
 // its `reachable` flag can lag behind the status endpoint (cache,
 // cooldown, transient timeouts) and that's what caused the
 // "dashboard says offline, config says online" discrepancy.
-import { store as omnirouteStore } from "/usr/plugins/omniroute/webui/omniroute-store.js";
+import { store as omnirouteStore } from "/plugins/omniroute/webui/omniroute-store.js";
 
 const MODE_KEY = "omniroute.mode";
 const DEBOUNCE_MS = 5000;
