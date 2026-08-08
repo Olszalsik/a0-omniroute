@@ -104,6 +104,11 @@
       </span>
       <span class="omni-pill warn" x-show="cachePill" x-text="cachePill" title="Showing data from the on-disk cache; live refresh failed."></span>
       <div class="omni-actions">
+        <button @click="openGatewayDashboard()"
+                :disabled="!gatewayUrl"
+                :title="gatewayUrl ? `Open the OmniRoute gateway's own web UI at ${gatewayUrl} (providers, combos, API keys, logs). Opens in a new tab.` : 'Gateway URL not available — click Refresh first.'">
+          Open gateway ↗
+        </button>
         <button @click="forceRefresh()" :disabled="busy" :title="busy ? 'Refreshing…' : (pendingIn > 0 ? `Wait ${pendingIn}s` : 'Fetch fresh data from the gateway')">
           <span x-text="refreshLabel">Refresh</span>
         </button>

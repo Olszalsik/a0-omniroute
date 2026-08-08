@@ -2206,15 +2206,21 @@ def test_config_html_renders_model_id_and_tier_tag():
 
 
 # ===========================================================================
-# 18c. bottom button has live status pill (Phase 5.4.7)
+# 18c. bottom button is a no-op (v2.6.5 — removed the live status pill)
 # ===========================================================================
-def test_bottom_button_has_live_status_pill():
-    """The bottom-right OmniRoute button must reflect actual gateway
-    reachability, not always show green. The previous version hardcoded
-    class='omni-on' and only flipped via a localStorage convention
-    nothing ever wrote. This test pins the corrected behavior: the
-    button must poll /api/plugins/omniroute/status and toggle
-    omni-on <-> omni-off based on the live response.
+def test_bottom_button_is_noop_after_v265():
+    """v2.6.5 removed the bottom "OmniRoute" pill (status dot + button next
+    to the chat input). It was redundant: it duplicated the online/offline
+    status already shown on the plugin pages, and its click opened the
+    plugin's INTERNAL dashboard modal — NOT the gateway's own web UI at
+    localhost:8080 that users actually wanted. The status + open-dashboard
+    actions were relocated onto the plugin pages (see
+    test_config_html_has_open_gateway_button / _open_dashboard_button).
+
+    The extension file is kept as a no-op so the chat-input-bottom-actions-end
+    slot stays registered (prevents stale extension-point errors on
+    reinstall/rollback) but renders nothing and no longer polls
+    /api/plugins/omniroute/status from the chat screen.
     """
     p = os.path.join(
         PLUGIN_ROOT,
@@ -2224,50 +2230,199 @@ def test_bottom_button_has_live_status_pill():
         "omniroute-button.html",
     )
     assert os.path.isfile(p), (
-        f"Bottom button extension missing: {p}. The button file is part "
-        "of the plugin's WebUI surface and must be present."
+        f"Bottom button extension missing: {p}. The file must remain "
+        "(as a no-op) so the extension slot stays registered."
     )
     src = open(p, encoding="utf-8").read()
-    # The file must NOT hardcode omni-on. Initial state must be
-    # 'omni-unknown' so the pill starts in a neutral color and only
-    # turns green AFTER a successful status poll.
-    assert 'class="omni-bottom-btn omni-unknown"' in src, (
-        "Bottom button must start with class='omni-bottom-btn omni-unknown' "
-        "(neutral mid-grey) so it does not appear green before the first "
-        "status poll completes."
+    # The visible button + its polling must be GONE.
+    assert "omni-bottom-btn" not in src, (
+        "Bottom button must no longer render the .omni-bottom-btn "
+        "element — v2.6.5 removed the pill from the chat screen."
     )
-    # The script must poll the status endpoint, not rely on localStorage
-    assert "localStorage.getItem('omniroute.mode')" not in src, (
-        "Bottom button must NOT use localStorage for its on/off state — "
-        "the source of truth is the live /api/plugins/omniroute/status "
-        "endpoint. The previous localStorage convention was never "
-        "written to by the plugin, so the button was always green."
+    assert "data-omni-button" not in src, (
+        "Bottom button must no longer ship the data-omni-button hook."
     )
-    # The script must call the status endpoint
-    assert "/api/plugins/omniroute/status" in src, (
-        "Bottom button must poll /api/plugins/omniroute/status to "
-        "determine the live reachability of the configured gateway."
+    assert "/api/plugins/omniroute/status" not in src, (
+        "Bottom button must no longer poll /api/plugins/omniroute/status "
+        "from the chat screen — the plugin pages poll on demand when "
+        "opened. Leaving the 60s setInterval would be dead traffic."
     )
-    # The script must apply the omni-on/omni-off class based on
-    # data.reachable
-    assert "reachable" in src, (
-        "Bottom button must read data.reachable from the status "
-        "response — this is the source of truth for the pill color."
+    assert "__omnirouteButtonInjected" not in src, (
+        "Bottom button must no longer install the re-injection guard / "
+        "polling IIFE — nothing should run."
     )
-    # The script must define the three states
-    for cls in ("omni-on", "omni-off", "omni-unknown"):
-        assert cls in src, (
-            f"Bottom button must define CSS for .{cls} class — the "
-            "script toggles between omni-on (green) and omni-off (grey), "
-            "with omni-unknown as the initial transient state."
-        )
-    # The script must guard against re-injection (the extension slot
-    # may be hit multiple times across SPA route changes)
-    assert "__omnirouteButtonInjected" in src, (
-        "Bottom button script must guard against re-injection — the "
-        "extension slot can fire multiple times across SPA route "
-        "changes, and we only want one polling timer."
+    # The file must explain WHY it is empty (the no-op contract), so a
+    # future reader doesn't "helpfully" re-add a button here.
+    assert "REMOVED" in src.upper(), (
+        "Bottom button no-op must document the removal (REMOVED in "
+        "v2.6.5) so the empty file is clearly intentional."
     )
+
+
+# ===========================================================================
+# 18e. gateway dashboard buttons (v2.6.5)
+# ===========================================================================
+def test_config_html_has_open_gateway_button():
+    """v2.6.5: the Settings page must wire an 'Open gateway ↗' button to
+    $store.omnirouteStore.openGateway() — the NEW link to the gateway's own
+    web UI at http://<host>:8080 that the removed bottom pill never had.
+    """
+    src = open(os.path.join(PLUGIN_ROOT, "webui", "config.html"), encoding="utf-8").read()
+    assert "openGateway()" in src, (
+        "config.html must wire a button to $store.omnirouteStore.openGateway()."
+    )
+    assert "Open gateway" in src, (
+        "config.html must contain an 'Open gateway' button label."
+    )
+    assert "gatewayWebUrl" in src, (
+        "config.html should reference $store.omnirouteStore.gatewayWebUrl "
+        "(the browser-reachable gateway URL) for the button tooltip / "
+        "disabled state."
+    )
+
+
+def test_config_html_has_open_dashboard_button():
+    """v2.6.5: the Settings page must wire an 'Open dashboard' button to
+    openModal('/plugins/omniroute/webui/dashboard.html') — this relocates
+    the removed bottom pill's 'open the plugin dashboard' action onto the
+    plugin page so the model browser + auto/utility:free creator stay
+    reachable after the pill is gone.
+    """
+    src = open(os.path.join(PLUGIN_ROOT, "webui", "config.html"), encoding="utf-8").read()
+    assert "openModal('/plugins/omniroute/webui/dashboard.html')" in src or \
+           'openModal("/plugins/omniroute/webui/dashboard.html")' in src, (
+        "config.html must call openModal('/plugins/omniroute/webui/"
+        "dashboard.html') to open the plugin's model browser."
+    )
+    assert "Open dashboard" in src, (
+        "config.html must contain an 'Open dashboard' button label."
+    )
+
+
+def test_dashboard_html_has_open_gateway_button():
+    """v2.6.5: the plugin Dashboard modal must wire an 'Open gateway ↗'
+    button to the local openGatewayDashboard() method."""
+    src = open(os.path.join(PLUGIN_ROOT, "webui", "dashboard.html"), encoding="utf-8").read()
+    assert "openGatewayDashboard()" in src, (
+        "dashboard.html must wire a button to openGatewayDashboard()."
+    )
+    assert "Open gateway" in src, (
+        "dashboard.html must contain an 'Open gateway' button label."
+    )
+
+
+def test_dashboard_js_exposes_open_gateway_dashboard():
+    """The Alpine factory must define openGatewayDashboard() + a gatewayUrl
+    getter, otherwise the dashboard button click 404s."""
+    js = open(os.path.join(PLUGIN_ROOT, "webui", "dashboard.js"), encoding="utf-8").read()
+    assert "openGatewayDashboard()" in js, (
+        "dashboard.js must define an openGatewayDashboard() method."
+    )
+    assert "get gatewayUrl()" in js, (
+        "dashboard.js must expose a gatewayUrl getter for the button's "
+        "disabled state + tooltip."
+    )
+    assert "function gatewayWebUrl" in js, (
+        "dashboard.js must define the module-level gatewayWebUrl() helper "
+        "(duplicated from the store — the dashboard uses its own scope)."
+    )
+
+
+def test_store_exposes_gateway_helpers():
+    """omniroute-store.js must expose the browser-reachable gateway URL
+    helper + an openGateway() method + a gatewayWebUrl getter, used by the
+    Settings page's 'Open gateway ↗' button."""
+    js = open(os.path.join(PLUGIN_ROOT, "webui", "omniroute-store.js"), encoding="utf-8").read()
+    assert "function gatewayWebUrl" in js, (
+        "omniroute-store.js must define the module-level gatewayWebUrl() "
+        "pure helper."
+    )
+    assert "get gatewayWebUrl()" in js, (
+        "omniroute-store.js must expose a gatewayWebUrl getter on the store."
+    )
+    assert "openGateway()" in js, (
+        "omniroute-store.js must define an openGateway() method."
+    )
+    assert "host.docker.internal" in js, (
+        "gatewayWebUrl must handle the host.docker.internal container-side "
+        "hostname (rewrite it to the browser's hostname)."
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_gateway_web_url_helper_transforms():
+    """The pure gatewayWebUrl(base_url) helper (in omniroute-store.js) must:
+      - strip the trailing /v1 API suffix to land on the gateway UI root
+      - rewrite host.docker.internal / localhost / 127.0.0.1 to the
+        browser's window.location.hostname (the browser can't resolve the
+        container-side names)
+      - keep the port from base_url
+      - return null for missing/unparseable input
+    We load the store module as a classic script (stripping ESM syntax,
+    same pattern as the dashboard debounce tests) with createStore stubbed,
+    then exercise the exported gatewayWebUrl directly.
+    """
+    store_path = os.path.join(PLUGIN_ROOT, "webui", "omniroute-store.js").replace("\\", "/")
+    body = f"""
+        const fs = require('fs');
+        let src = fs.readFileSync('{store_path}', 'utf8');
+        // Strip ESM import/export lines (run as a classic script).
+        src = src.replace(/^\\s*import .+;?\\s*$/gm, '');
+        src = src.replace(/^\\s*export\\s+/gm, '');
+        // createStore is imported from AlpineStore.js — stub it so the
+        // module-level `const store = createStore(...)` doesn't throw. We
+        // only need the pure helper, not the store object.
+        global.createStore = (name, obj) => obj;
+        global.toastFrontendError = () => {{}};
+        global.toastFrontendSuccess = () => {{}};
+        global.toastFrontendInfo = () => {{}};
+        // The helper reads window.location.hostname for the container-side
+        // hostname rewrite. Simulate a browser browsing Agent Zero on
+        // host "myhost".
+        global.window = {{ location: {{ hostname: 'myhost' }} }};
+        const factory = new Function(src + '\\nreturn gatewayWebUrl;');
+        const fn = factory();
+        const out = {{
+          container: fn('http://host.docker.internal:8080/v1'),
+          localhost: fn('http://localhost:8080/v1'),
+          loopback: fn('http://127.0.0.1:8080/v1'),
+          trailingSlash: fn('http://host.docker.internal:8080/v1/'),
+          noPort: fn('http://host.docker.internal/v1'),
+          alreadyRoot: fn('http://host.docker.internal:8080'),
+          https: fn('https://host.docker.internal:8443/v1'),
+          empty: fn(''),
+          none: fn(null),
+          garbage: fn('not a url'),
+        }};
+        console.log('RESULT ' + JSON.stringify(out));
+        process.exit(0);
+    """
+    rc, out, err = _run_node(body)
+    assert rc == 0, f"node exited {rc}: stderr={err!r}"
+    line = [l for l in out.splitlines() if l.startswith("RESULT ")]
+    assert line, f"no RESULT line in output: {out!r}"
+    r = json.loads(line[0][len("RESULT "):])
+    # /v1 stripped, host rewritten to the browser's hostname, port kept.
+    assert r["container"] == "http://myhost:8080", (
+        f"host.docker.internal:8080/v1 -> http://myhost:8080, got {r['container']!r}"
+    )
+    assert r["localhost"] == "http://myhost:8080", r["localhost"]
+    assert r["loopback"] == "http://myhost:8080", r["loopback"]
+    assert r["trailingSlash"] == "http://myhost:8080", (
+        f"trailing slash on /v1/ must still strip to root, got {r['trailingSlash']!r}"
+    )
+    # No port in base_url -> URL() treats it as the scheme default (none) ->
+    # the gateway UI root with no explicit port.
+    assert r["noPort"] == "http://myhost", r["noPort"]
+    # Already at the root (no /v1) stays the root.
+    assert r["alreadyRoot"] == "http://myhost:8080", r["alreadyRoot"]
+    # Scheme + port preserved.
+    assert r["https"] == "https://myhost:8443", r["https"]
+    # Missing/unparseable -> null (caller shows a "not configured" toast,
+    # never opens a blank tab).
+    assert r["empty"] is None, r["empty"]
+    assert r["none"] is None, r["none"]
+    assert r["garbage"] is None, r["garbage"]
 
 
 # ===========================================================================

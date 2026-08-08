@@ -1,166 +1,25 @@
 <!--
-  OmniRoute bottom button - v2.5.3 (live status).
+  OmniRoute bottom button (end slot) - REMOVED in v2.6.5.
 
-  What changed:
-  - The previous version (v2.2.3) hardcoded class="omni-bottom-btn omni-on"
-    and only flipped to "omni-off" via a localStorage convention that
-    nothing in the plugin ever wrote. Result: the dot was always green,
-    even when the gateway was unreachable.
-  - This version polls POST /api/plugins/omniroute/status every 60s
-    and toggles the class based on the real reachability of the
-    configured gateway. Green when reachable, grey when not. No
-    localStorage — the source of truth is the live status endpoint.
+  The bottom "OmniRoute" pill (status dot + button next to the chat input)
+  was redundant: it duplicated the online/offline status that already lives
+  on the plugin's own pages (Settings -> External -> OmniRoute, and the
+  OmniRoute dashboard modal), and its click opened the plugin's INTERNAL
+  dashboard modal — which is NOT the OmniRoute gateway's own web UI at
+  localhost:8080 that users actually wanted to reach.
 
-  Compatibility:
-  - The <button> still uses an inline onclick so click works even
-    if this script never executes (Alpine / late-injected DOM).
-  - The script is wrapped in (function(){...})() with a try/catch
-    and a window-level guard so re-injection is safe.
+  v2.6.5 relocates the pill's two functions onto the plugin pages:
+    - online/offline status  -> already shown on config.html + dashboard.html
+    - "open the dashboard"    -> a new "Open dashboard" button on config.html
+    - "open the gateway UI"   -> a new "Open gateway ↗" button on BOTH pages
+                                 (opens http://<host>:8080 in a new tab)
+
+  This file is kept as a no-op so the chat-input-bottom-actions-end
+  extension slot stays registered (prevents stale extension-point errors
+  on reinstall/rollback) but renders nothing and no longer polls the
+  status endpoint from the chat screen. The 60s status polling that used
+  to run here is gone — the plugin pages poll on demand when opened,
+  which is what the user asked for ("when I want to open it up, then I
+  can see whether OmniRoute is online or offline").
 -->
-<button
-  type="button"
-  class="omni-bottom-btn omni-unknown"
-  title="OmniRoute - click to open dashboard"
-  data-omni-button
-  onclick="openModal('/plugins/omniroute/webui/dashboard.html')"
->
-  <span class="dot"></span>
-  <span class="material-symbols-outlined" style="font-size:16px;opacity:0.7;">public</span>
-  <span>OmniRoute</span>
-</button>
-
-<style>
-  .omni-bottom-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35em;
-    padding: 0.35em 0.7em;
-    background: transparent;
-    border: none;
-    color: inherit;
-    font-size: 0.82em;
-    cursor: pointer;
-    border-radius: 4px;
-    transition: background 0.15s ease;
-    opacity: 0.75;
-    font-family: inherit;
-  }
-  .omni-bottom-btn:hover { background: rgba(255,255,255,0.06); opacity: 1; }
-  .omni-bottom-btn .dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: #6b7280;
-    display: inline-block;
-    transition: background 0.2s ease;
-  }
-  /* Green when the gateway is reachable */
-  .omni-bottom-btn.omni-on .dot {
-    background: #22c55e;
-    box-shadow: 0 0 4px rgba(34, 197, 94, 0.5);
-  }
-  /* Grey when the gateway is unreachable */
-  .omni-bottom-btn.omni-off .dot {
-    background: #6b7280;
-    box-shadow: none;
-  }
-  /* Mid-grey before the first poll returns (transient state) */
-  .omni-bottom-btn.omni-unknown .dot {
-    background: #9ca3af;
-    box-shadow: none;
-  }
-  /* Gentle pulse to feel alive when on */
-  @keyframes omni-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.55; }
-  }
-  .omni-bottom-btn.omni-on .dot {
-    animation: omni-pulse 2.5s ease-in-out infinite;
-  }
-  /* Tooltip additions for accessibility */
-  .omni-bottom-btn.omni-on::after    { content: ""; }
-  .omni-bottom-btn.omni-off::after   { content: ""; }
-</style>
-
-<script>
-  // Live status pill: poll POST /api/plugins/omniroute/status every 60s
-  // and flip omni-on <-> omni-off based on status.reachable. Initial
-  // state is omni-unknown (mid-grey) until the first poll resolves.
-  (function () {
-    if (window.__omnirouteButtonInjected) return;
-    window.__omnirouteButtonInjected = true;
-
-    var POLL_MS = 60000;
-    var inFlight = false;
-
-    function apply(state) {
-      try {
-        document.querySelectorAll('[data-omni-button]').forEach(function (btn) {
-          btn.classList.remove('omni-on', 'omni-off', 'omni-unknown');
-          btn.classList.add(state);
-          if (state === 'omni-on') {
-            btn.title = 'OmniRoute - gateway online';
-          } else if (state === 'omni-off') {
-            btn.title = 'OmniRoute - gateway offline (click to open dashboard)';
-          } else {
-            btn.title = 'OmniRoute - checking status...';
-          }
-        });
-      } catch (e) { /* DOM mutation never throws */ }
-    }
-
-    function poll() {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        // Use sendBeacon-style fetch with keepalive so the request
-        // survives if the page is being torn down (e.g. SPA route
-        // change). The endpoint is a small JSON status; POST with
-        // an empty body matches the framework contract used by the
-        // dashboard's "Re-detect" button.
-        fetch('/api/plugins/omniroute/status', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-          keepalive: true,
-        })
-          .then(function (r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-          })
-          .then(function (data) {
-            // Phase 5.4.6 contract: api/status.py returns
-            //   { ok: bool, reachable: bool, base_url: ...,
-            //     provider_count: N, latency_ms: N, error: null|str }
-            // The `reachable` flag is the source of truth for the
-            // WebUI pill. `ok` is the raw health check result; the
-            // handler also writes `reachable` for legacy callers.
-            var reachable = !!(data && (data.reachable || data.ok));
-            apply(reachable ? 'omni-on' : 'omni-off');
-          })
-          .catch(function () {
-            // Network error or endpoint missing - treat as offline
-            // rather than leaving the pill in the "checking" state.
-            apply('omni-off');
-          })
-          .then(function () { inFlight = false; });
-      } catch (e) {
-        inFlight = false;
-        apply('omni-off');
-      }
-    }
-
-    // First poll ASAP, then every POLL_MS. The script may be injected
-    // multiple times across SPA route changes; the window-level guard
-    // at the top means only the first IIFE runs the timer. Subsequent
-    // injections still call poll() so the new button instance gets
-    // a real status on its first paint.
-    poll();
-    setInterval(poll, POLL_MS);
-
-    // Also re-poll on visibility change - if the user backgrounds
-    // the tab for a while, we want fresh status when they return,
-    // not a 15-min-old snapshot.
-    document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) poll();
-    });
-  })();
-</script>
+<!-- intentionally empty -->

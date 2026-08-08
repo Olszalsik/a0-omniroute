@@ -31,6 +31,39 @@ import { store as omnirouteStore } from "/plugins/omniroute/webui/omniroute-stor
 const MODE_KEY = "omniroute.mode";
 const DEBOUNCE_MS = 5000;
 
+// ---- gateway web-URL helper (v2.6.5) -----------------------------------
+// Browser-reachable URL for the OmniRoute gateway's OWN web UI, derived
+// from the plugin's configured base_url (container-perspective, e.g.
+// http://host.docker.internal:8080/v1). Strips /v1 and rewrites the
+// container-side hostname to window.location.hostname. Duplicated from
+// omniroute-store.js on purpose (the dashboard uses its own Alpine scope
+// and does not import the settings store — same reason recoverGateway()/
+// uninstallGateway() are duplicated above). Keep the two copies in sync.
+function gatewayWebUrl(base_url) {
+  const raw = (base_url || "").trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    let host = u.hostname;
+    if (
+      host === "host.docker.internal" ||
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "0.0.0.0"
+    ) {
+      host =
+        (typeof window !== "undefined" &&
+          window.location &&
+          window.location.hostname) ||
+        "localhost";
+    }
+    const port = u.port ? ":" + u.port : "";
+    return `${u.protocol}//${host}${port}`;
+  } catch (e) {
+    return null;
+  }
+}
+
 export function omnirouteDashboard() {
   return {
     busy: false,
@@ -140,6 +173,13 @@ export function omnirouteDashboard() {
         if (this.freeOnly && m.tier !== "free") return false;
         return true;
       });
+    },
+
+    // v2.6.5: browser-reachable URL for the gateway's own web UI, derived
+    // from the base_url the dashboard endpoint returned. null until the
+    // first successful/failed fetch populates baseUrl.
+    get gatewayUrl() {
+      return gatewayWebUrl(this.baseUrl);
     },
 
     init() {
@@ -375,6 +415,26 @@ export function omnirouteDashboard() {
       } catch (e) {
         toastFrontendError("Copy failed: " + e, "OmniRoute");
       }
+    },
+
+    // ----------------------------------------------------------------------
+    // v2.6.5: open the OmniRoute gateway's OWN web UI (the providers/combos/
+    // keys/logs admin page at http://<host>:8080) in a new browser tab.
+    // This is the page the old bottom pill never linked to — it opened this
+    // plugin dashboard instead, which is why users never found the gateway's
+    // own "nice dashboard from localhost". baseUrl comes from the dashboard
+    // endpoint; if it's missing/unparseable we toast instead of opening a
+    // blank tab.
+    openGatewayDashboard() {
+      const url = this.gatewayUrl;
+      if (!url) {
+        toastFrontendError(
+          "Gateway URL is not available yet. Click Refresh, then try again.",
+          "OmniRoute"
+        );
+        return;
+      }
+      window.open(url, "_blank", "noopener");
     },
 
     // ----------------------------------------------------------------------

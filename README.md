@@ -128,27 +128,38 @@ that teaches it the tier-fallback workflow, and a matching
 bring the gateway online. If you are not sure where to start, use this
 profile.
 
-### 3. The status pill (top-right)
+### 3. Status — on the plugin page
 
-A small pill in the top-right corner of the WebUI shows the gateway
-state. Green: online, with the model count. Red: offline. Yellow:
-showing cached data because the live call failed. Click the pill to
-open the dashboard.
+The gateway's online/offline state is shown on the plugin's own pages,
+not as a floating pill on the chat screen. Open the plugin (see below)
+and the header shows a pill: **green** = online with the model count,
+**red** = offline, **yellow** = showing cached data because the live
+check failed. A **Re-detect** button re-probes the gateway on demand.
 
-### 4. The dashboard
+> v2.6.5 removed the bottom "OmniRoute" chat-input pill — it duplicated
+> this status and its click opened the plugin's *internal* dashboard,
+> which was easy to confuse with the gateway's own web UI (see §4 and
+> §6). The status + entry points now all live on the plugin pages.
 
-Click the bottom-left **OmniRoute** chat-input button (or follow the
-sidebar link) to open `webui/dashboard.html`. The dashboard shows:
+### 4. The dashboard (plugin model browser)
+
+Open it with the **Open dashboard** button on the settings page
+(*Settings → External → OmniRoute*). It opens as an in-SPA modal
+showing `webui/dashboard.html`:
 
 - Tier breakdown bar (Free / Cheap / Key / Sub counts).
 - A searchable, tier-filterable model list.
 - Last-seen info if the live check failed.
-- A "Refresh" button that re-probes the gateway.
-- A "Start OmniRoute" button (when offline) that downloads
+- A **Refresh** button that re-probes the gateway.
+- A **Start OmniRoute** button (when offline) that downloads
   `install-omniroute.ps1`.
-- A "Remove gateway" button (when online) that downloads
+- A **Remove gateway** button (when online) that downloads
   `uninstall-omniroute.ps1`.
-- A "Settings" button that opens the plugin's config page.
+- A **Settings** button that opens the plugin's config page.
+- A **Open gateway ↗** button that opens the gateway's own web UI
+  (see §6).
+- The **Utility route** section with the `auto/utility:free` creator
+  (see §7).
 
 ### 5. The settings page
 
@@ -156,18 +167,33 @@ sidebar link) to open `webui/dashboard.html`. The dashboard shows:
 on some builds) opens `webui/config.html`. From there you can:
 
 - See the current install state and re-detect.
+- **Open dashboard** — open the plugin's model browser (§4).
+- **Open gateway ↗** — open the OmniRoute gateway's own web UI in a
+  new tab (§6).
 - Send a one-shot test completion to verify the round-trip.
 - Load the full model list (with tier tags).
 - Remove the gateway (see [Lifecycle](#lifecycle-install-disable-uninstall-remove-gateway)).
 - Edit the advanced settings: base URL, API key, default model,
   timeout, preload-on-startup.
 
-### 6. The status badge injector
+### 6. The gateway's own dashboard (web UI)
 
-The plugin ships an `extensions/webui/page-head/omniroute-status.html`
-that injects the status pill into the top-right of every WebUI page.
-It is purely additive — if the plugin is disabled or the gateway is
-down, the pill degrades gracefully (red instead of throwing).
+The OmniRoute gateway serves its **own** web UI — the providers list,
+combos manager, API keys, and logs — at `http://<host>:8080` (the same
+host:port as the `/v1` API, minus the `/v1` suffix). This is a separate,
+jam-packed page from the gateway itself, *not* the plugin's model
+browser (§4). Open it with the **Open gateway ↗** button on either the
+settings page or the plugin dashboard.
+
+The button derives the URL from your configured `base_url`: it strips
+the `/v1` API suffix and rewrites the container-side hostname
+(`host.docker.internal` / `localhost` / `127.0.0.1` — names your
+*browser* can't resolve) to the host you're browsing Agent Zero from,
+keeping the port. So if Agent Zero is at `http://myhost:8080` for you,
+the gateway UI opens at `http://myhost:8080`. If `base_url` is unset or
+unparseable the button is disabled (never opens a blank tab). This is
+where you grab the **control token** you paste into the plugin's API-key
+field to create combos (see §7's "API key required to create" note).
 
 ### 7. The utility route — `auto/utility:free`
 
@@ -250,9 +276,9 @@ From the Agent Zero WebUI:
    image, starts the container with `--restart=unless-stopped`, and
    verifies the gateway is responding on `http://localhost:8080/v1`.
 
-The status pill turns green within ~60 seconds (the WebUI polls on a
-60 s delayed refresh after the installer download). If the pill is
-still red, click **Re-detect** in the settings page or hit
+The plugin page's status turns green within ~60 seconds (the settings
+page schedules a 60 s delayed re-detect after the installer download).
+If it is still red, click **Re-detect** in the settings page or hit
 [Troubleshooting](#troubleshooting).
 
 You can also bring the container up by hand if you prefer:
@@ -317,7 +343,7 @@ the whole story:
 | **Uninstall plugin** (via *Settings → Plugins*) | Container keeps running | `hooks.uninstall()` logs (no side effects), folder deleted. |
 | **Reinstall plugin** (drop folder back in) | Container keeps running | `hooks.install()` runs again. The gateway is immediately reachable if the container is still up. |
 | **"Start OmniRoute"** (WebUI button, gateway offline) | Container is started (or created) | The WebUI button downloads `install-omniroute.ps1`; the user double-clicks it. |
-| **"Remove OmniRoute gateway"** (WebUI button, gateway online) | Container is stopped, removed; user is prompted to also remove the image | Plugin stays installed. After the script runs, the status pill turns red and the settings page switches to the "Not installed" branch. |
+| **"Remove OmniRoute gateway"** (WebUI button, gateway online) | Container is stopped, removed; user is prompted to also remove the image | Plugin stays installed. After the script runs, the plugin page's status turns red and the settings page switches to the "Not installed" branch. |
 
 The asymmetry is **intentional**. The plugin is a thin client. The
 gateway is independent infrastructure that other tools (curl,
@@ -361,7 +387,7 @@ only shown when the gateway is online). The browser downloads
 "also remove the image?" prompt (default: no — keep the image so
 re-installs are instant), and wait ~10 seconds. The script does
 `docker stop` + `docker rm` + an optional `docker rmi`. The plugin
-stays installed but the status pill turns red.
+stays installed but the plugin page's status turns red.
 
 The uninstall script is **idempotent**: running it when no container
 exists prints *"OmniRoute container is not installed on this host.
@@ -396,7 +422,7 @@ you have two options:
 
 ## Troubleshooting
 
-### Status pill is red
+### Plugin status is red
 
 The gateway is offline. Work the list:
 

@@ -25,7 +25,7 @@ import os
 log = logging.getLogger(__name__)
 
 PLUGIN_NAME = "omniroute"
-EXPECTED_VERSION = "2.6.4"
+EXPECTED_VERSION = "2.6.5"
 
 # B2: the LiteLLM model id injected into a preset's ``kwargs.fallbacks`` when
 # the user toggles "Use OmniRoute as a fallback". ``omniroute/auto`` lets the

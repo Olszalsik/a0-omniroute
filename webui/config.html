@@ -130,6 +130,23 @@
             <span x-show="!$store.omnirouteStore.busy">Re-detect</span>
             <span x-show="$store.omnirouteStore.busy">Checking...</span>
           </button>
+          <!-- v2.6.5: relocated the removed bottom pill's "open the dashboard"
+               action onto the plugin page. Opens the plugin's internal model
+               browser (live models, tier breakdown, the auto/utility:free
+               creator) as a stacked in-SPA modal. openModal is the framework
+               global the bottom pill used to use. -->
+          <button @click="(typeof openModal === 'function') &amp;&amp; openModal('/plugins/omniroute/webui/dashboard.html')"
+                  title="Open the OmniRoute model browser — your live models, tier breakdown, and the auto/utility:free route creator">
+            Open dashboard
+          </button>
+          <!-- v2.6.5: the NEW gateway-UI link the bottom pill never had. Opens
+               the OmniRoute gateway's own web UI (providers, combos, API
+               keys, logs) at http://&lt;host&gt;:8080 in a new tab. -->
+          <button @click="$store.omnirouteStore.openGateway()"
+                  :disabled="!$store.omnirouteStore.gatewayWebUrl"
+                  :title="$store.omnirouteStore.gatewayWebUrl ? `Open the OmniRoute gateway's own web UI at ${$store.omnirouteStore.gatewayWebUrl} (providers, combos, API keys, logs). Opens in a new tab.` : 'Gateway URL not configured — set the OmniRoute base URL in Advanced settings.'">
+            Open gateway ↗
+          </button>
         </div>
 
         <!-- ================== READY STATE ================== -->

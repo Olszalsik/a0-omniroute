@@ -88,9 +88,16 @@ A self-contained A0 plugin (id `omniroute`, version `2.5.4`):
    installer lives in `webui/`, which is served by BOTH routes (path-traversal guard allows
    `webui/` and `extensions/webui/`), but only `/plugins/...` is the version that survives
    reinstalls — the user-plugin route would 404 the file. Always fetch from `/plugins/...`.
-9. **The chat-input button links to `/usr/plugins/omniroute/webui/dashboard.html`, NOT
-   `/plugins/...`.** The dashboard is a plugin-local page, not a built-in asset, so the
-   user-plugin route is correct here. (Mirror of the built-in/user asset rule.)
+9. **The plugin dashboard is opened in-SPA via `openModal('/plugins/omniroute/webui/dashboard.html')`
+   (the `/plugins/...` asset route), never a hard `window.location.href`.** Since v2.6.5 the
+   chat-input bottom pill is a **no-op** (removed — it duplicated the status already shown on
+   the plugin pages and opened the *internal* dashboard, which users confused with the
+   gateway's own web UI). The "open the dashboard" action now lives on the Settings page as an
+   "Open dashboard" button calling `openModal('/plugins/omniroute/webui/dashboard.html')`.
+   `openModal` is the framework global that loads the page in-SPA (Alpine + stores present);
+   hard-navigating to a standalone `dashboard.html` would reload the SPA. The
+   `extensions/webui/chat-input-bottom-actions-end/omniroute-button.html` file is KEPT as a
+   no-op so the extension slot stays registered — do not re-add a button there.
 10. **Hook signatures are `async def install/pre_update/uninstall`.** A0 v2.5 awaits all three
     (see `usr/plugins/_model_fallback/hooks.py:5-11`). Defining them as sync `def` will trigger
     a `TypeError: object coroutine is not callable` from the installer and abort the install
@@ -186,6 +193,25 @@ A self-contained A0 plugin (id `omniroute`, version `2.5.4`):
     retried as `PUT /api/combos/<id>` so "Create / refresh" updates in place.
     Don't hand-curate the target list in the UI, don't add a second combo id,
     and don't mutate the preset from this path.
+21. **The "Open gateway ↗" button opens the OmniRoute gateway's OWN web UI
+    (providers/combos/keys/logs at `http://<host>:8080`), derived from the
+    configured `base_url` via the pure `gatewayWebUrl(base_url)` helper.** The
+    helper strips the trailing `/v1` API suffix (to land on the gateway UI root)
+    and rewrites the container-side hostname (`host.docker.internal` /
+    `localhost` / `127.0.0.1` / `0.0.0.0` — names the *browser* cannot resolve)
+    to `window.location.hostname` (the host the user is browsing Agent Zero
+    from), keeping the port. It returns `null` for a missing/unparseable URL,
+    and the buttons are `:disabled` on `null` so we never open a blank tab.
+    The helper lives in **two** places — `webui/omniroute-store.js` (exported
+    `gatewayWebUrl`, used by the Settings page's `openGateway()`) and
+    `webui/dashboard.js` (module-local `function gatewayWebUrl`, used by
+    `openGatewayDashboard()`) — duplicated on purpose because the dashboard
+    uses its own Alpine scope and does not import the settings store (same
+    reason `recoverGateway()`/`uninstallGateway()` are duplicated). Keep the
+    two copies byte-for-byte in sync. Do NOT point this button at the plugin's
+    internal `dashboard.html` — that's the "Open dashboard" button's job
+    (invariant #9); the gateway UI is a separate page the gateway itself
+    serves on the same host:port as `/v1`.
 
 ## Build discipline
 - **Stdlib-only helpers.** `helpers/omniroute_client.py` must not depend on `requests`, `httpx`,
@@ -262,9 +288,15 @@ A self-contained A0 plugin (id `omniroute`, version `2.5.4`):
   and no `config`/`context` injection, so it renders empty boxes + `$store.omnirouteStore
   undefined`). The Back button closes the modal via the framework `closeModal()` global (no
   SPA reload). See "v2.6.3" below.
-- **WebUI injection points:** `extensions/webui/page-head/omniroute-status.html` (status badge) +
-  `extensions/webui/chat-input-bottom-actions-end/omniroute-button.html` (open-dashboard button) +
-  `extensions/webui/sidebar-end/dashboard-link.html` (sidebar link).
+- **WebUI injection points:** all four `extensions/webui/*` slots
+  (`page-head/`, `chat-input-bottom-actions-end/`, `chat-top-end/`,
+  `chat-input-bottom-actions-start/`, `sidebar-end/`) are **no-ops** kept only
+  to keep the slots registered (prevents stale extension-point errors on
+  reinstall/rollback). Since v2.6.5 the bottom chat-input pill is a no-op too
+  — the online/offline status + the "open dashboard" / "open gateway ↗" links
+  all live on the plugin pages (`webui/config.html` header row + the
+  `webui/dashboard.html` actions row), not on the chat screen. Do not re-add a
+  visible button to any extension slot.
 - **Agent Zero model registration:** `conf/model_providers.yaml` + `agents/omniroute/agent.yaml`
   (the latter auto-picked by `helpers/subagents.py:71-72` via
   `get_enabled_plugin_paths(None, "agents")`; its `prompts:` map loads `*.md` files from
@@ -531,3 +563,69 @@ fast→slow ordering, cap + slow reservation), the pure `gateway_root` helper,
 `create_combo`'s POST→PUT retry, the `api/combos.py` endpoint's full
 curate-from-live-free-models glue (via the path-aware `StubServer`), and the
 401-specific error message.
+
+## v2.6.5 — gateway dashboard link + bottom pill removed (2026-08-08)
+
+**Problem.** Two related complaints from the user: (1) they had saved their
+OmniRoute API key but had *never seen* the gateway's own "nice dashboard from
+localhost" — the bottom "OmniRoute" pill (the only chat-screen entry point)
+opened the plugin's *internal* dashboard modal, **not** the gateway's own web
+UI at `http://localhost:8080`; nothing in the plugin linked there. (2) that
+same bottom pill was redundant — it duplicated the online/offline status
+already shown on the plugin's Settings page and dashboard modal, and clutters
+the chat input.
+
+**Fix.**
+- **Removed the bottom pill.** `extensions/webui/chat-input-bottom-actions-end/
+  omniroute-button.html` is now a no-op (renders nothing, stops the 60s
+  `/status` polling). The file is kept so the extension slot stays registered.
+  Its two functions were relocated onto the plugin pages:
+    - *online/offline status* — already shown on `config.html` + `dashboard.html`
+      (the pages poll on demand when opened, which is what the user asked for:
+      "when I want to open it up, then I can see whether OmniRoute is online or
+      offline").
+    - *"open the dashboard"* — a new **"Open dashboard"** button on
+      `config.html` calls `openModal('/plugins/omniroute/webui/dashboard.html')`,
+      so the model browser + the `auto/utility:free` creator stay reachable now
+      that the pill is gone.
+- **Added an "Open gateway ↗" button to BOTH pages** (`config.html` header row
+  + `dashboard.html` actions row). It opens the OmniRoute gateway's OWN web UI
+  (providers, combos, API keys, logs) at `http://<host>:8080` in a new tab — the
+  page the pill never linked to. The URL is derived from the configured
+  `base_url` by the pure `gatewayWebUrl(base_url)` helper, which strips the
+  `/v1` API suffix and rewrites the container-side hostname
+  (`host.docker.internal`/`localhost`/`127.0.0.1`/`0.0.0.0`) to
+  `window.location.hostname` (the browser can't resolve the container-side
+  names; the gateway is published on the same host the user is browsing from),
+  keeping the port. `null` on missing/unparseable input → the button is
+  `:disabled` and shows a "not configured" tooltip, never a blank tab.
+- The helper is **duplicated** in `webui/omniroute-store.js` (exported, used by
+  `$store.omnirouteStore.openGateway()` on the Settings page) and
+  `webui/dashboard.js` (module-local, used by `openGatewayDashboard()` on the
+  dashboard modal) — the dashboard uses its own Alpine scope and does not
+  import the settings store (same reason `recoverGateway()` /
+  `uninstallGateway()` are duplicated). The two copies must stay in sync.
+
+**Why two buttons, not one.** "Open dashboard" opens the plugin's *internal*
+model browser (your live models, tiers, the `auto/utility:free` creator) as an
+in-SPA modal. "Open gateway ↗" opens the *gateway's own* admin page in a new
+browser tab. They are different pages serving different purposes; conflating
+them (as the old pill did) is exactly what hid the gateway UI from the user.
+The `↗` glyph marks the new-tab/external one.
+
+**Files.** `plugin.yaml` (2.6.4 → 2.6.5 + description mentions the gateway
+link), `hooks.py` + `execute.py` (EXPECTED_VERSION → 2.6.5), the no-op bottom
+button, `webui/config.html` + `webui/dashboard.html` (the buttons),
+`webui/omniroute-store.js` + `webui/dashboard.js` (the helper + methods).
+
+**Smoke coverage.** `test_bottom_button_has_live_status_pill` is replaced by
+`test_bottom_button_is_noop_after_v265` (asserts the no-op contract). New
+tests pin both buttons on both pages, the store + dashboard helpers, and the
+pure `gatewayWebUrl` transforms (container-side hostname rewrite, `/v1`
+stripping, port preservation, `null` on bad input) via a Node harness that
+loads the store as a classic script with `createStore` stubbed.
+
+**Auth note still applies.** The "Open gateway ↗" button lands the user on the
+gateway UI where they can grab the control token / manage combos; but creating
+the `auto/utility:free` combo still needs that API key in the plugin's
+Settings (see the v2.6.4 "Auth asymmetry" note above).

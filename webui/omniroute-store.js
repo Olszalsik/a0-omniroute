@@ -15,6 +15,57 @@
 import { createStore } from "/js/AlpineStore.js";
 import { toastFrontendError, toastFrontendSuccess, toastFrontendInfo } from "/components/notifications/notification-store.js";
 
+// ---- gateway web-URL helper (v2.6.5) -----------------------------------
+// Turn the plugin's configured ``base_url`` (the container-perspective
+// OpenAI API endpoint, e.g. ``http://host.docker.internal:8080/v1``) into
+// a URL the BROWSER can actually open to reach the OmniRoute gateway's own
+// web UI (the providers/combos/keys/logs admin page).
+//
+// Two transforms:
+//   1. Strip the trailing ``/v1`` API suffix (and any trailing slash) so we
+//      land on the gateway root, where the gateway serves its own web UI.
+//   2. Replace container-side hostnames the browser cannot resolve —
+//      ``host.docker.internal`` is a Docker-Desktop container-only DNS
+//      name; ``localhost`` / ``127.0.0.1`` inside the container refer to the
+//      container itself, not the host. The browser is reaching Agent Zero
+//      on some host, so reuse ``window.location.hostname`` (the host the
+//      user is currently browsing from). The gateway is published on the
+//      same host (the installer maps host :8080 -> container :20128), so
+//      <browser-host>:<base_url-port> is the right address. Keep the port
+//      from base_url; if it was the scheme default, URL omits it (correct).
+//
+// Returns ``null`` for a missing/unparseable base_url so callers can show
+// a "not configured" toast instead of opening a broken tab.
+//
+// Duplicated (intentionally) in webui/dashboard.js — the dashboard uses its
+// own Alpine scope and does not import the settings store, mirroring the
+// existing recoverGateway()/uninstallGateway() duplication. Keep the two
+// copies in sync.
+export function gatewayWebUrl(base_url) {
+  const raw = (base_url || "").trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    let host = u.hostname;
+    if (
+      host === "host.docker.internal" ||
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "0.0.0.0"
+    ) {
+      host =
+        (typeof window !== "undefined" &&
+          window.location &&
+          window.location.hostname) ||
+        "localhost";
+    }
+    const port = u.port ? ":" + u.port : "";
+    return `${u.protocol}//${host}${port}`;
+  } catch (e) {
+    return null;
+  }
+}
+
 export const store = createStore("omnirouteStore", {
   // ---- state ----
   status: null,
@@ -46,6 +97,35 @@ export const store = createStore("omnirouteStore", {
     if (this.recovering) return "Recovering…";
     if (this.uninstalling) return "Removing…";
     return "Not installed";
+  },
+
+  // ---- v2.6.5: gateway web-UI URL (browser-reachable) ----
+  // Reads the configured base_url (or the last probed status.base_url) and
+  // rewrites it to the gateway's own web UI root for the current browser
+  // host. See the module-level gatewayWebUrl() helper for the transforms.
+  get gatewayWebUrl() {
+    const base =
+      (this._config && this._config.base_url) ||
+      (this.status && this.status.base_url) ||
+      "";
+    return gatewayWebUrl(base);
+  },
+
+  // Open the OmniRoute gateway's own web UI (providers, combos, API keys,
+  // logs) in a new browser tab. This is the page the bottom pill NEVER
+  // linked to (it opened the plugin's internal dashboard instead), which
+  // is why users never found the "nice dashboard from localhost". Guarded
+  // against a missing/unparseable base_url so we never open a blank tab.
+  openGateway() {
+    const url = this.gatewayWebUrl;
+    if (!url) {
+      toastFrontendError(
+        "Gateway URL is not configured. Set the OmniRoute base URL in Advanced settings.",
+        "OmniRoute"
+      );
+      return;
+    }
+    window.open(url, "_blank", "noopener");
   },
 
   // ---- v2.2 plugin-settings-store contract ----
