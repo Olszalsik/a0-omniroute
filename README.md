@@ -203,7 +203,17 @@ drops the rest:
 The plugin reads your live free models, curates the list, and creates the
 combo in the gateway. It's **idempotent** — clicking it again updates the
 existing combo in place (so it always reflects your current providers).
-No API keys are required; free-tier first.
+
+> **API key required to create (not to use).** Listing and *using* free models
+> needs no key, but **creating a combo is an authenticated gateway-admin
+> action** — the gateway's `POST /api/combos` returns `401 Authentication
+> required` without one. So set the **OmniRoute API key** first (*Settings →
+> External → OmniRoute → API key* — the gateway's control token, shown in the
+> OmniRoute gateway UI at the host URL), save, then click Create / refresh. If
+> you click it with no key, the button shows a red error telling you exactly
+> that. No-key alternative: skip creation entirely and pick an existing free
+> combo the gateway already ships — `omniroute/auto/best-free` or
+> `omniroute/auto/coding:free` — for the Utility slot.
 
 **Use it.** In *Settings → Model Presets*, pick
 **`omniroute/auto/utility:free`** for the **Utility Model** slot. The

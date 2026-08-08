@@ -146,10 +146,7 @@ class Combos(ApiHandler):
             return _fail(
                 combo_id,
                 selectable,
-                f"Gateway rejected the combo (HTTP {gw.get('status')}): "
-                f"{gw.get('error') or gw.get('body') or 'unknown error'}. "
-                f"You can also create it manually in the gateway's Combos "
-                f"dashboard.",
+                _combo_create_error(gw),
                 free_model_count=len(free_ids),
                 gateway_response=gw,
             )
@@ -189,3 +186,32 @@ def _fail(
         "gateway_response": gateway_response,
         "error": error,
     }
+
+
+def _combo_create_error(gw: dict) -> str:
+    """Turn a failed gateway combo response into a user-actionable message.
+
+    The gateway's ``POST /api/combos`` is an *authenticated admin action*: it
+    returns **401 Authentication required** when no API key is configured, even
+    though listing free models (``GET /v1/models``) is public. A 401 is by far
+    the most likely failure for a free-tier-first user (the plugin ships with
+    no ``api_key``), so we call it out by name and point at the exact setting
+    instead of burying it in a generic "gateway rejected the combo" string —
+    which is what made the failure look like a mysterious bug rather than a
+    one-field config fix.
+    """
+    status = gw.get("status")
+    if status == 401:
+        return (
+            "Creating a combo requires the OmniRoute API key (the gateway "
+            "returned 401: Authentication required). Add it in Settings -> "
+            "OmniRoute -> API key (the gateway's control token, shown in the "
+            "OmniRoute gateway UI at the host URL), save, then click Create / "
+            "refresh again. Listing and using free models needs no key — only "
+            "combo creation does."
+        )
+    detail = gw.get("error") or gw.get("body") or "unknown error"
+    return (
+        f"Gateway rejected the combo (HTTP {status}): {detail}. "
+        f"You can also create it manually in the gateway's Combos dashboard."
+    )

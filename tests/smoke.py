@@ -2596,6 +2596,38 @@ class TestCombosEndpoint:
         assert result["targets"] == []
         assert "free" in result["error"].lower()
 
+    def test_401_returns_set_api_key_message(
+        self, stub_server, stub_helpers_plugins, api_combos,
+    ):
+        """v2.6.4: the gateway's POST /api/combos is an authenticated admin
+        action — it 401s with no API key, even though GET /v1/models is public.
+        The endpoint must detect the 401 and return a message that tells the
+        user to set the OmniRoute API key (NOT a generic "gateway rejected"
+        string). This is the exact failure a free-tier-first user hits when
+        they click Create / refresh with no key configured."""
+        stub_server.set_routes([
+            # Free models list fine (public) — gets past curation.
+            ("GET", "/v1/models", {"data": [
+                {"id": "groq/llama-4-scout:free"},
+            ]}, 200),
+            # Combo create 401s (no key).
+            ("POST", "/api/combos", {"error": {"message": "Authentication required"}}, 401),
+        ])
+        result = self._run(api_combos)
+        assert result["ok"] is False
+        # The 401 must be surfaced by name
+        assert result["gateway_response"]["status"] == 401
+        msg = result["error"]
+        assert "401" in msg, f"401 message must mention 401; got {msg!r}"
+        assert "API key" in msg, (
+            f"401 message must tell the user to set the API key; got {msg!r}"
+        )
+        assert "Settings" in msg, (
+            f"401 message must point at Settings; got {msg!r}"
+        )
+        # The free model count is still reported (the GET succeeded)
+        assert result["free_model_count"] == 1
+
 
 def test_self_check_includes_combos():
     """v2.6.4: hooks._self_check() must list the new utility-combo files so the

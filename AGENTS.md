@@ -513,7 +513,21 @@ Presets; this path never writes the preset.
 place: `create_combo` retries `POST` as `PUT` on a conflict, so the combo always
 reflects the user's current live free models.
 
-**Smoke coverage.** `tests/smoke.py` adds 6 tests for the curator (exclusions,
+**Auth asymmetry — combo *creation* needs a key, free-model *use* does not.**
+`GET /v1/models` (listing free models) is public; `POST /api/combos` (creating a
+combo) is an authenticated gateway-admin action that returns **401
+Authentication required** with no key. The plugin ships with no `api_key`, so a
+free-tier-first user who clicks "Create / refresh" with no key gets a 401. This
+is NOT a bug — `api/combos.py:_combo_create_error` detects the 401 and returns a
+message telling the user to set the OmniRoute API key in Settings (the gateway's
+control token, shown in the gateway UI at the host URL). Do NOT try to make
+combo creation work without a key (the gateway forbids it); instead keep the
+401-specific message accurate. No-key users can still pick an existing free
+combo the gateway already ships (`auto/best-free`, `auto/coding:free`) for the
+Utility slot without creating anything.
+
+**Smoke coverage.** `tests/smoke.py` adds tests for the curator (exclusions,
 fast→slow ordering, cap + slow reservation), the pure `gateway_root` helper,
-`create_combo`'s POST→PUT retry, and the `api/combos.py` endpoint's full
-curate-from-live-free-models glue (via the path-aware `StubServer`).
+`create_combo`'s POST→PUT retry, the `api/combos.py` endpoint's full
+curate-from-live-free-models glue (via the path-aware `StubServer`), and the
+401-specific error message.
