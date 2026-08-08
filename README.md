@@ -108,7 +108,7 @@ upstream provider directly so you control routing in code.
 
 ## How to use
 
-Six entry points, in the order most users discover them:
+Seven entry points, in the order most users discover them:
 
 ### 1. The model picker
 
@@ -168,6 +168,49 @@ The plugin ships an `extensions/webui/page-head/omniroute-status.html`
 that injects the status pill into the top-right of every WebUI page.
 It is purely additive — if the plugin is disabled or the gateway is
 down, the pill degrades gracefully (red instead of throwing).
+
+### 7. The utility route — `auto/utility:free`
+
+Agent Zero's **utility model** is the small/fast slot that runs on
+nearly every turn — history/topic summarization, chat renaming, memory
+consolidation, document-query rewriting, JSON sub-tasks. It fires far
+more often than the main chat model, so it's the best place to use a
+**free** model. The plugin ships a ready-made free route for it.
+
+**Routes & tiers.** OmniRoute groups models into four tiers —
+**Sub** (subscription), **Key** (your API key), **Cheap** (cheap paid),
+**Free** (no auth). On top of that it offers `auto/*` combo routes that
+fan out across models with one id: the gateway already ships
+`auto/best`, `auto/cheap`, `auto/coding:free`, and `auto/reasoning:free`.
+This plugin adds one more, tuned for the utility slot:
+`auto/utility:free`.
+
+**What it picks.** `auto/utility:free` is a **free-only, priority-ordered**
+route curated from *your live free models*. It keeps models that are
+**fast + can follow JSON-as-text + have a usable context window**, and
+drops the rest:
+
+- ✗ Image / video / audio models (`flux`, `dall-e`, `veo`, `whisper`, `tts`, …).
+- ✗ Embedding / rerank / moderation / clip models (`bge`, `gte-`, `rerank`, …).
+- ✗ Tiny toy models that can't follow a format reliably (`smollm`, `1.5b`, …).
+- ✗ Flaky low-rate no-auth providers (`g4f`, `dgrid/`) and deprecated providers.
+- ✓ **Fast models first** (Groq, Cerebras, Gemini-Flash, Qwen, …).
+- ✓ **The best models kept as last-resort fallbacks** (DeepSeek-R1, o1/o3, …) —
+  ordered *last*, never excluded, so a strong model always catches the tail.
+
+**Create it.** Open the **dashboard** → scroll to the **Utility route
+`auto/utility:free`** section → click **Create / refresh `auto/utility:free`**.
+The plugin reads your live free models, curates the list, and creates the
+combo in the gateway. It's **idempotent** — clicking it again updates the
+existing combo in place (so it always reflects your current providers).
+No API keys are required; free-tier first.
+
+**Use it.** In *Settings → Model Presets*, pick
+**`omniroute/auto/utility:free`** for the **Utility Model** slot. The
+plugin never writes your preset — you pick it yourself.
+
+You can also create or edit the combo manually in the gateway's own
+**Combos** dashboard at the gateway host URL.
 
 ---
 

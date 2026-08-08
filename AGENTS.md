@@ -170,6 +170,22 @@ A self-contained A0 plugin (id `omniroute`, version `2.5.4`):
     explicit-removal counterpart to invariant #12 (which forbids
     installing the gateway from `hooks.install()`). The two invariants
     together are the full side-effect-free contract.
+20. **The `auto/utility:free` combo is curated server-side from live free models,
+    and provisioning it never touches a model preset.** The combo is a
+    gateway-side route (created via `POST /api/combos` on the gateway root, NOT
+    `/v1`), provisioned by `api/combos.py` from the user's *live* free model list
+    (one `GET /v1/models`) run through the pure curator
+    `helpers/utility_combo.py:curate_utility_targets`. The curator is the ONE
+    place that decides which free models suit the utility slot (fast +
+    JSON-capable + a usable context window; image/audio/embedding/toy/flaky/
+    deprecated ids dropped; best-but-slow reasoners kept as last-resort
+    fallbacks, never excluded). The dashboard button only creates/refreshes
+    the combo in the gateway — it does NOT write the user's preset; the user
+    picks `omniroute/auto/utility:free` for the Utility slot themselves. The
+    `POST /api/combos` call is idempotent: a 409/400 "already exists" is
+    retried as `PUT /api/combos/<id>` so "Create / refresh" updates in place.
+    Don't hand-curate the target list in the UI, don't add a second combo id,
+    and don't mutate the preset from this path.
 
 ## Build discipline
 - **Stdlib-only helpers.** `helpers/omniroute_client.py` must not depend on `requests`, `httpx`,
@@ -231,9 +247,21 @@ A self-contained A0 plugin (id `omniroute`, version `2.5.4`):
   the plugin folder). The cache and `last_known` share the on-disk file and the
   atomic writer — keep them in lockstep.
 - **API endpoints (one handler per file):** `api/status.py`, `api/models.py`, `api/test.py`,
-  `api/dashboard.py`, `api/usage.py`.
+  `api/dashboard.py`, `api/usage.py`, `api/combos.py` (v2.6.4 — provisions the
+  `auto/utility:free` combo in the gateway from the user's live free models).
+- **Utility-combo curator (pure, no I/O):** `helpers/utility_combo.py` — the single
+  source of truth for which free models suit the utility slot (exclusions, tier
+  ordering, slow-model reservation, cap). Unit-tested directly by
+  `tests/smoke.py`; the gateway `POST /api/combos` call lives in
+  `helpers/omniroute_client.py` (`create_combo` / `create_combo_async` /
+  `gateway_root`).
 - **Settings UI (Alpine store contract):** `webui/config.html` + `webui/omniroute-store.js`.
-- **Dashboard page:** `webui/dashboard.html` + `webui/dashboard.js`.
+- **Dashboard page:** `webui/dashboard.html` + `webui/dashboard.js`. `openSettings()`
+  opens the real plugin-settings panel via `pluginSettingsPrototype.openConfig('omniroute')`
+  (NOT a hard `window.location.href` to standalone `config.html` — that page has no Alpine.js
+  and no `config`/`context` injection, so it renders empty boxes + `$store.omnirouteStore
+  undefined`). The Back button closes the modal via the framework `closeModal()` global (no
+  SPA reload). See "v2.6.3" below.
 - **WebUI injection points:** `extensions/webui/page-head/omniroute-status.html` (status badge) +
   `extensions/webui/chat-input-bottom-actions-end/omniroute-button.html` (open-dashboard button) +
   `extensions/webui/sidebar-end/dashboard-link.html` (sidebar link).
@@ -372,3 +400,120 @@ open with unsaved changes when the user saves OmniRoute config, the
 OmniRoute save wins (last writer). This is inherent to B2 being a shortcut
 that writes the same presets file B1 edits. The membership-change-only guard
 above minimizes the window: a no-op toggle save does not rewrite the file.
+
+## v2.6.3 — Dashboard Settings + Back fixed to be in-SPA (2026-08-08)
+
+**Problem.** The dashboard's `openSettings()` did `window.location.href =
+"/plugins/omniroute/webui/config.html"` — a hard navigation to a **standalone** config.html.
+config.html uses Alpine (`x-data`, `$store.omnirouteStore`, `x-init`) but its `<head>` loads
+only the store module, NOT Alpine.js, and the framework only injects the `config`/`context`
+config.html binds to when it is loaded inside the `plugin-settings.html` wrapper (via
+`<x-component path="/plugins/<name>/webui/config.html">`). On the standalone page none of
+that is present → every Alpine binding inert → empty boxes + the `$store.omnirouteStore
+undefined` error the user saw ("fail to load model … undefined" / "not even loading"). The
+hard nav also reloaded the whole SPA, and the `<a href="/">Back</a>` link did the same —
+the "it navigate the menu clicking on buttons" jank. There were also two always-visible
+Settings entry points (header button + Mode-card "Change in settings →" link).
+
+**Fix.**
+- `openSettings()` (`webui/dashboard.js`) now calls
+  `window.Alpine.store('pluginSettingsPrototype').openConfig('omniroute')` — the framework's
+  canonical plugin-settings opener (the same one the plugin list uses). It opens
+  `plugin-settings.html`, which injects `config`/`context` and loads config.html via
+  `<x-component>` as a stacked modal on top of the dashboard modal. Closing it returns to the
+  dashboard. The dashboard does not use the `pluginSettingsPrototype` store, so the store's
+  internal `cleanup()` is safe to call from here. Defensive fallback: if the store is
+  unavailable, toast an instruction instead of hard-navigating to a broken page.
+- Back is now a `<button class="omni-back-btn" @click="closeModal()">` (framework global from
+  `webui/js/modals.js`) — closes the modal, no SPA reload. (Falls back to `window.location
+  href='/'` only if `closeModal` is somehow absent.)
+- Removed the redundant Mode-card "Change in settings →" link. The header "Settings" button
+  (always visible) remains the single always-visible entry point; the offline-empty-state
+  "Settings" link stays (contextual, only when the gateway is offline — not a duplicate).
+- Minor: `.omni-back-btn` style added to match the header action buttons.
+
+**Stats counter note.** The dashboard API (`/api/plugins/omniroute/dashboard`,
+`api/dashboard.py`) is unchanged and smoke-tested. Stats show 0/empty only when the gateway
+is down OR when the user was looking at the broken standalone config page. After this fix
+the Settings button no longer strands the user on that broken page.
+
+**Display-name cleanup (also 2026-08-08).** User-facing prose that referenced the internal
+codename `_model_fallback` now reads "a0 Model Fallback": the fallback-picker description in
+`_model_config/webui/model-field.html` and the "Use as fallback" help text in
+`webui/config.html`. Code identifiers, imports, paths, and developer docs (AGENTS.md / code
+comments) intentionally still say `_model_fallback` — that is the real plugin name for
+developers. The fallback picker rows were also redesigned to mirror the primary-model picker
+(provider `<select>` on the left + model-name input with magnifier search in the middle); see
+`_model_config/webui/model-field.html`.
+
+## v2.6.4 — `auto/utility:free` utility route (2026-08-08)
+
+**Problem.** Agent Zero's **utility model** is the small/fast slot that fires on
+nearly every turn (history/topic summarization, chat renaming, behaviour-ruleset
+merging, memory memorize/recall/consolidation, document-query rewriting, email
+dispatch, infection-safety auditing, optional chat compaction). Five of those jobs
+emit JSON-as-text parsed leniently by `helpers/dirty_json.py` (no native
+`json_mode`); context ranges from tiny single-turn prompts up to ~50k-char
+history feeds; the per-call cascade timeout is 30 s. Users had no free route
+tuned for this slot — the gateway ships `auto/coding:free` and
+`auto/reasoning:free`, but nothing for the high-frequency utility workload, so
+users either burned a paid model on every turn or hand-picked free models one by
+one with no ordering and no filtering of non-text/toy models.
+
+**Fix — a ready-made free route curated from the user's live models.**
+- **`helpers/utility_combo.py`** (NEW, pure — no I/O) curates the target list for
+  `auto/utility:free`:
+  - **Excludes** non-utility ids: image (`flux`, `dall-e`, `imagen`, `seedream`,
+    `kling`, `sora`, …), video (`veo`, `video`), audio (`whisper`, `tts`, `bark`,
+    `playai`, `elevenlabs`, …), embeddings/rerank/moderation/clip (`embed`, `bge`,
+    `e5-`, `gte-`, `rerank`, `llama-guard`, `clip`, …), tiny toy models that can't
+    follow JSON (`0.5b`, `1.5b`, `135m`, `360m`, `smollm`, `tiny`), flaky low-rate
+    no-auth providers (`g4f`, `dgrid/`), and deprecated providers (`galadriel`,
+    `predibase`). Patterns are case-insensitive substrings matched against the
+    bare gateway id (no `omniroute/` prefix).
+  - **Orders** fast → mid → slow across 4 tiers (tier 0 = fast inference hosts
+    `groq/`, `cerebras/`, `nvidia/`, `siliconflow/`, …; tier 1 = fast chat families
+    `gemini*flash`, `gpt-oss`, `qwen3`, `gemma`, …; tier 2 = solid mid
+    `deepseek-chat`, `mistral`, `glm-4`, …; tier 3 = best-but-slow reasoners
+    `deepseek-r1`, `o1`/`o3`, `llama-*70b`, `qwen3-max`). Unknown-but-plausible
+    chat models default to tier 2 (solid mid) — not dropped, not pinned first.
+  - **Reserves `_RESERVE_SLOW = 2` tail slots** for tier-3 reasoners so the "best"
+    models are always kept as last-resort fallbacks even when the fast/mid pool
+    alone would fill the cap (per the user's "don't exclude the best models" rule —
+    they're ordered last, not removed).
+  - **Caps at `MAX_TARGETS = 12`**; original gateway order is preserved within
+    each tier so re-runs with the same enabled providers produce a stable combo.
+- **`helpers/omniroute_client.py`** (MODIFIED) adds the gateway-combos client:
+  `create_combo` (POST `{root}/api/combos`, retry as `PUT /api/combos/<urlencoded id>`
+  on 409/400/"exist"/"duplicate" → idempotent), `list_combos`, `_raw_request`
+  (low-level urllib that returns status+body without raising, so conflict
+  responses can be inspected), `gateway_root` (strips trailing `/v1` so the
+  combos API at the gateway root is reachable), and `create_combo_async` /
+  `list_combos_async` wrappers (per invariant #1/#2 — API handlers use the
+  `*_async` wrappers, never the sync methods).
+- **`api/combos.py`** (NEW) — `POST /api/plugins/omniroute/combos` handler. Glues
+  the above together: `health_async` (one `GET /v1/models`) → filter
+  `classify_tier == "free"` → `curate_utility_targets` → `create_combo_async` to
+  the gateway. Returns `{ok, combo_id, selectable_as: "omniroute/auto/utility:free",
+  strategy: "priority", target_count, targets:[…20], free_model_count,
+  gateway_response:{status, method, body}, error}`. Side-effect-free w.r.t. the
+  plugin folder: reads the live model list + POSTs one combo to the gateway; no
+  preset / `config.json` / on-disk state touched.
+- **`webui/dashboard.html` + `webui/dashboard.js`** (MODIFIED) — "Utility route"
+  section with a "Create / refresh `auto/utility:free`" button calling
+  `createUtilityCombo()` → the endpoint above. Result pill shows target count +
+  sample ids; error path points the user at the gateway's own Combos dashboard.
+
+**Selectable as.** `omniroute/auto/utility:free` in the model picker (badged
+"free" — the tier classifier already badges `auto/.*:free` as free, no tier-code
+change). The user picks it for the **Utility Model** slot in Settings → Model
+Presets; this path never writes the preset.
+
+**Idempotency.** Clicking "Create / refresh" again updates the existing combo in
+place: `create_combo` retries `POST` as `PUT` on a conflict, so the combo always
+reflects the user's current live free models.
+
+**Smoke coverage.** `tests/smoke.py` adds 6 tests for the curator (exclusions,
+fast→slow ordering, cap + slow reservation), the pure `gateway_root` helper,
+`create_combo`'s POST→PUT retry, and the `api/combos.py` endpoint's full
+curate-from-live-free-models glue (via the path-aware `StubServer`).

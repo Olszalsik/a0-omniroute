@@ -69,21 +69,64 @@ class _StubHandler(BaseHTTPRequestHandler):
     response_body: bytes = b"{}"
     response_ctype = "application/json"
     request_log: List[Tuple[str, str]] = []
+    # v2.6.4: opt-in path/method routing. When non-empty, the first route
+    # whose method matches the request AND whose path_substr is in the
+    # request path wins; otherwise the global set_response() values apply.
+    # Backwards compatible: existing tests leave this empty (set_response
+    # also clears it). Used by the combos-endpoint test to stub a gateway
+    # that returns /v1/models on GET and accepts /api/combos on POST/PUT.
+    routes: List[Tuple[str, str, Any, int, str]] = []
 
     def log_message(self, *args, **kwargs):
         pass
 
+    def _select(self, method: str) -> Tuple[int, bytes, str]:
+        """Pick (status, body, ctype) — route list first, then global."""
+        for r_method, r_path, r_body, r_status, r_ctype in self.__class__.routes:
+            if r_method not in ("*", method):
+                continue
+            if r_path and r_path not in self.path:
+                continue
+            body = r_body
+            if isinstance(body, (dict, list)):
+                body = json.dumps(body).encode("utf-8")
+            elif isinstance(body, str):
+                body = body.encode("utf-8")
+            elif body is None:
+                body = b"{}"
+            return int(r_status), body, r_ctype
+        return (
+            self.__class__.response_status,
+            self.__class__.response_body,
+            self.__class__.response_ctype,
+        )
+
     def do_GET(self):
         self.__class__.request_log.append(("GET", self.path))
-        self.send_response(self.response_status)
-        self.send_header("Content-Type", self.response_ctype)
-        self.send_header("Content-Length", str(len(self.response_body)))
+        status, body, ctype = self._select("GET")
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(self.response_body)
+        self.wfile.write(body)
 
     def do_POST(self):
         self.__class__.request_log.append(("POST", self.path))
-        self.do_GET()
+        status, body, ctype = self._select("POST")
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_PUT(self):
+        self.__class__.request_log.append(("PUT", self.path))
+        status, body, ctype = self._select("PUT")
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 
 class StubServer:
@@ -107,6 +150,29 @@ class StubServer:
         _StubHandler.response_status = status
         _StubHandler.response_body = payload
         _StubHandler.response_ctype = ctype
+        _StubHandler.request_log = []
+        # Clear any path/method routing so a prior set_routes() can't leak
+        # into a test that uses the single-global-response mode.
+        _StubHandler.routes = []
+
+    def set_routes(self, routes: List[Tuple[str, str, Any, int]]) -> None:
+        """Path/method-aware routing (v2.6.4). Each route is
+        ``(method, path_substr, body, status[, ctype])``. ``method`` may be
+        ``"*"`` to match any method; ``path_substr`` is matched as a substring
+        of the request path (empty string matches any). The first route whose
+        method matches AND whose path_substr is in the request path wins;
+        unmatched requests fall back to the global ``set_response()`` values.
+        Resets the global response + request log on call.
+        """
+        normalized: List[Tuple[str, str, Any, int, str]] = []
+        for r in routes:
+            method, path, body, status = r[:4]
+            ctype = r[4] if len(r) > 4 else "application/json"
+            normalized.append((method, path, body, status, ctype))
+        _StubHandler.routes = normalized
+        _StubHandler.response_status = 200
+        _StubHandler.response_body = b"{}"
+        _StubHandler.response_ctype = "application/json"
         _StubHandler.request_log = []
 
     @property
@@ -170,6 +236,45 @@ def helpers_cache():
     return _load(
         "usr.plugins.omniroute.helpers.cache",
         os.path.join(PLUGIN_ROOT, "helpers", "cache.py"),
+    )
+
+
+@pytest.fixture(scope="module")
+def helpers_utility_combo():
+    # Pure module (no I/O) — loaded directly, no stubs needed.
+    return _load(
+        "usr.plugins.omniroute.helpers.utility_combo",
+        os.path.join(PLUGIN_ROOT, "helpers", "utility_combo.py"),
+    )
+
+
+@pytest.fixture(scope="module")
+def api_combos():
+    """Load api/combos.py with helpers.api stubbed (mirrors api_models).
+
+    Pre-loads its real plugin imports (omniroute_client + utility_combo) so
+    the handler loads regardless of whether earlier tests have already put
+    them in sys.modules — this fixture must not depend on test ordering.
+    """
+    # Real plugin helpers the handler imports at module load time.
+    _load(
+        "usr.plugins.omniroute.helpers.omniroute_client",
+        os.path.join(PLUGIN_ROOT, "helpers", "omniroute_client.py"),
+    )
+    _load(
+        "usr.plugins.omniroute.helpers.utility_combo",
+        os.path.join(PLUGIN_ROOT, "helpers", "utility_combo.py"),
+    )
+    h = types.ModuleType("helpers")
+    h_api = types.ModuleType("helpers.api")
+    class _StubApiHandler:
+        def __init__(self, *a, **k): pass
+    h_api.ApiHandler = _StubApiHandler
+    sys.modules["helpers"] = h
+    sys.modules["helpers.api"] = h_api
+    return _load(
+        "usr.plugins.omniroute.api.combos",
+        os.path.join(PLUGIN_ROOT, "api", "combos.py"),
     )
 
 
@@ -1189,9 +1294,11 @@ def test_required_files_exist():
         "api/test.py",
         "api/dashboard.py",
         "api/usage.py",
+        "api/combos.py",  # v2.6.4: provisions auto/utility:free in the gateway
         "helpers/omniroute_client.py",
         "helpers/last_known.py",
         "helpers/cache.py",
+        "helpers/utility_combo.py",  # v2.6.4: curates the auto/utility:free target list
         "webui/config.html",
         "webui/omniroute-store.js",
         "webui/dashboard.html",
@@ -1780,32 +1887,38 @@ def test_dashboard_html_shows_last_error_on_offline():
     )
 
 
-def test_dashboard_openSettings_falls_back_to_direct_navigation():
-    """Phase 5.4.8: openSettings() must fall back to direct navigation
-    when the pluginSettingsPrototype store is absent. The previous
-    version returned early if `proto?.openConfig` was truthy even when
-    the call failed silently, leaving the user with a button that did
-    nothing. Now the fallback is the LAST line of defense, after both
-    the prototype call AND its catch block.
+def test_dashboard_openSettings_uses_in_spa_openConfig():
+    """v2.6.3: openSettings() must open the REAL plugin-settings panel
+    in-SPA via the framework's ``pluginSettingsPrototype.openConfig``
+    store method, NOT hard-navigate to a standalone config.html page.
+
+    Root cause fixed: the standalone config.html served at
+    /plugins/omniroute/webui/config.html has no Alpine.js and receives no
+    config/context injection (the framework only injects those inside the
+    plugin-settings.html wrapper). Hard-navigating there left every Alpine
+    binding inert -> empty boxes + "$store.omnirouteStore undefined" (the
+    "fail to load model ... undefined" the user reported). ``openConfig``
+    opens the real settings panel as a stacked in-SPA modal that DOES
+    inject config/context, so config.html renders with real data.
     """
     src = open(os.path.join(PLUGIN_ROOT, "webui", "dashboard.js"), encoding="utf-8").read()
-    # The fallback must be a direct navigation to config.html. v2.5 serves
-    # usr/plugins/<name>/ under the /plugins/<name>/ route (the same route
-    # _model_config uses for /plugins/_model_config/...), so the asserted
-    # path is /plugins/omniroute/..., NOT /usr/plugins/omniroute/...
-    assert "/plugins/omniroute/webui/config.html" in src, (
-        "dashboard.js openSettings() must include a direct navigation "
-        "fallback to /plugins/omniroute/webui/config.html when the "
-        "pluginSettingsPrototype store is missing or its openConfig "
-        "method throws."
+
+    # The canonical in-SPA opener must be present.
+    assert "pluginSettingsPrototype" in src, (
+        "dashboard.js openSettings() must use the framework's "
+        "pluginSettingsPrototype store to open the settings panel."
     )
-    # The fallback must be INSIDE openSettings, not just present
-    # somewhere in the file. We do this by scanning for the body of
-    # the openSettings method — start at the function header and read
-    # until the matching close brace at the same indentation level.
+    assert ".openConfig(" in src, (
+        "dashboard.js openSettings() must call openConfig() on the "
+        "pluginSettingsPrototype store."
+    )
+
+    # The openConfig call must be INSIDE openSettings (not just present
+    # somewhere in the file) and must target the omniroute plugin
+    # specifically. Scan for the body of the openSettings method — start at
+    # the function header and read until the matching close brace.
     fn_start = src.find("openSettings() {")
     assert fn_start >= 0, "openSettings() function not found in dashboard.js"
-    # Find the matching `}` by tracking brace depth from the opening `{`.
     depth = 0
     i = fn_start
     saw_open = False
@@ -1820,11 +1933,19 @@ def test_dashboard_openSettings_falls_back_to_direct_navigation():
                 break
         i += 1
     body = src[fn_start:i + 1]
-    assert "config.html" in body, (
-        "openSettings() body must include the direct navigation fallback "
-        "to config.html — the previous version relied solely on the "
-        "pluginSettingsPrototype store which may be absent on standalone "
-        "dashboard pages."
+    assert 'openConfig("omniroute")' in body or "openConfig('omniroute')" in body, (
+        "openSettings() must call openConfig(\"omniroute\") to open this "
+        "plugin's settings panel in-SPA."
+    )
+
+    # The old hard-navigation fallback must be GONE. The standalone config
+    # page is Alpine-less + context-less, which is exactly the empty-box /
+    # "undefined" failure this version fixes.
+    assert 'window.location.href = "/plugins/omniroute/webui/config.html"' not in src, (
+        "dashboard.js must NOT hard-navigate to the standalone config.html "
+        "page (v2.6.3 removed this — it produced empty boxes + "
+        "\"$store.omnirouteStore undefined\" because standalone config.html "
+        "has no Alpine + no config/context injection)."
     )
 
 
@@ -2192,6 +2313,316 @@ def test_install_preflight_does_not_raise_when_gateway_down():
     # No ERROR or CRITICAL
     assert "ERROR" not in levels, "install() must never log ERROR (pre-flight is non-blocking)"
     assert "CRITICAL" not in levels
+
+
+# ===========================================================================
+# 20. helpers/utility_combo.py + api/combos.py + combos client (v2.6.4)
+#
+# The `auto/utility:free` route is curated by the pure helper
+# `helpers/utility_combo.py:curate_utility_targets` and provisioned in the
+# gateway by `OmniRouteClient.create_combo` (POST /api/combos, retry as PUT on
+# conflict), glued together by `api/combos.py`. These tests cover the
+# curator's exclusion/ordering/cap/reservation rules, the pure `gateway_root`
+# helper, `create_combo`'s idempotent POST→PUT retry, and the endpoint's full
+# curate-from-live-free-models flow (via the path-aware StubServer).
+# ===========================================================================
+class TestUtilityComboCurator:
+    """The curator is the single source of truth for which free models suit
+    the utility slot. These tests pin its exclusion, ordering, cap, and
+    slow-reservation rules so a future edit can't silently drift them."""
+
+    def test_drops_non_text_modalities(self, helpers_utility_combo):
+        """Image / video / audio / embedding / rerank / moderation / toy /
+        flaky / deprecated ids must be dropped; valid chat ids must survive."""
+        ids = [
+            "groq/llama-4-scout",          # valid fast chat (kept)
+            "openai/gpt-4o-mini",          # valid chat (kept)
+            "flux-dev",                    # image (dropped)
+            "dall-e-3",                    # image (dropped)
+            "google/veo-3",                # video (dropped)
+            "openai/whisper-1",            # audio (dropped)
+            "openai/tts-1",                # audio (dropped)
+            "baai/bge-m3",                 # embedding (dropped)
+            "jina/jina-rerank-v2",         # rerank (dropped)
+            "meta-llama/llama-guard-3",    # moderation (dropped)
+            "openai/clip-vit",             # clip (dropped)
+            "smollm2-1.5b",                # toy (dropped)
+            "qwen2.5-0.5b",                # toy (dropped)
+            "g4f/gpt-4o",                  # flaky no-auth (dropped)
+            "galadriel/test",              # deprecated (dropped)
+            "predibase/x",                 # deprecated (dropped)
+        ]
+        out = helpers_utility_combo.curate_utility_targets(ids)
+        out_set = set(out)
+        # Valid chat models survive
+        assert "groq/llama-4-scout" in out_set
+        assert "openai/gpt-4o-mini" in out_set
+        # Every excluded pattern is absent
+        for bad in (
+            "flux-dev", "dall-e-3", "google/veo-3", "openai/whisper-1",
+            "openai/tts-1", "baai/bge-m3", "jina/jina-rerank-v2",
+            "meta-llama/llama-guard-3", "openai/clip-vit", "smollm2-1.5b",
+            "qwen2.5-0.5b", "g4f/gpt-4o", "galadriel/test", "predibase/x",
+        ):
+            assert bad not in out_set, f"excluded model survived curation: {bad!r}"
+
+    def test_orders_fast_first_slow_last(self, helpers_utility_combo):
+        """Tier 0 (fast hosts) → tier 1 (fast families) → tier 2 (mid) →
+        tier 3 (slow reasoners). The strong-but-slow models come last."""
+        ids = [
+            "deepseek/deepseek-r1",       # tier 3 (slow reasoner)
+            "deepseek/deepseek-chat",     # tier 2 (mid)
+            "google/gemini-2.5-flash",    # tier 1 (fast family)
+            "groq/llama-4-scout",         # tier 0 (fast host)
+        ]
+        out = helpers_utility_combo.curate_utility_targets(ids)
+        assert out == [
+            "groq/llama-4-scout",
+            "google/gemini-2.5-flash",
+            "deepseek/deepseek-chat",
+            "deepseek/deepseek-r1",
+        ], f"expected fast→mid→slow order, got {out}"
+
+    def test_caps_at_max_targets(self, helpers_utility_combo):
+        """The result never exceeds MAX_TARGETS, even with many valid ids."""
+        # Generate 30 distinct fast-host ids (tier 0) — all valid
+        ids = [f"groq/model-{i}" for i in range(30)]
+        out = helpers_utility_combo.curate_utility_targets(ids)
+        assert len(out) <= helpers_utility_combo.MAX_TARGETS, (
+            f"curate returned {len(out)} > MAX_TARGETS="
+            f"{helpers_utility_combo.MAX_TARGETS}"
+        )
+        # Original gateway order preserved within the tier
+        assert out == [f"groq/model-{i}" for i in range(helpers_utility_combo.MAX_TARGETS)]
+
+    def test_reserves_slow_tail_slots(self, helpers_utility_combo):
+        """Even when the fast/mid pool alone would fill the cap, the
+        `_RESERVE_SLOW` tail slots are reserved for tier-3 reasoners so the
+        "best" models are always kept as last-resort fallbacks (ordered last,
+        not excluded — per the user's "don't exclude the best models" rule)."""
+        combo = helpers_utility_combo
+        # More than enough fast models to fill the cap on their own
+        fast = [f"groq/fast-{i}" for i in range(combo.MAX_TARGETS + 5)]
+        # Two strong-but-slow reasoners that must land in the reserved tail
+        slow = ["deepseek/deepseek-r1", "openai/o3"]
+        out = combo.curate_utility_targets(fast + slow)
+        # Cap honored
+        assert len(out) == combo.MAX_TARGETS
+        # The slow reasoners occupy the last _RESERVE_SLOW slots
+        assert out[-combo._RESERVE_SLOW:] == slow, (
+            f"expected the last {combo._RESERVE_SLOW} slots to be the slow "
+            f"reasoners {slow}, got tail {out[-combo._RESERVE_SLOW:]}"
+        )
+        # And the fast models only filled (MAX_TARGETS - _RESERVE_SLOW) slots
+        fast_slots = combo.MAX_TARGETS - combo._RESERVE_SLOW
+        assert out[:fast_slots] == [f"groq/fast-{i}" for i in range(fast_slots)]
+        # The slow reasoners must NOT appear in the fast section
+        assert "deepseek/deepseek-r1" not in out[:fast_slots]
+        assert "openai/o3" not in out[:fast_slots]
+
+    def test_empty_and_non_string_inputs_are_safe(self, helpers_utility_combo):
+        """Empty list, None entries, and non-string entries must not raise."""
+        out = helpers_utility_combo.curate_utility_targets([])
+        assert out == []
+        # Mixed junk + one valid id
+        out = helpers_utility_combo.curate_utility_targets(
+            ["", None, 123, "groq/valid", "flux-img"]
+        )
+        assert out == ["groq/valid"]
+
+
+def test_gateway_root_strips_trailing_v1(helpers_omniroute):
+    """`gateway_root` strips the trailing `/v1` (and any trailing slash) so the
+    combos API at the gateway root (`{root}/api/combos`) is reachable from a
+    `/v1` base_url. Pure function — no I/O."""
+    gr = helpers_omniroute.gateway_root
+    assert gr("http://host.docker.internal:8080/v1") == "http://host.docker.internal:8080"
+    assert gr("http://localhost:8080/v1/") == "http://localhost:8080"
+    assert gr("http://localhost:8080/") == "http://localhost:8080"
+    assert gr("http://localhost:8080") == "http://localhost:8080"
+    assert gr("http://x/v1/") == "http://x"
+    # Already a root (no /v1) — unchanged
+    assert gr("http://x:8080") == "http://x:8080"
+    # Defensive: empty / None
+    assert gr("") == ""
+    assert gr(None) == ""
+
+
+def test_create_combo_retries_put_on_conflict(stub_server, helpers_omniroute):
+    """`create_combo` POSTs {root}/api/combos and, on a 409/400 "already
+    exists" conflict, retries as PUT {root}/api/combos/<urlencoded id> — so
+    "Create / refresh" is idempotent and updates the combo in place."""
+    stub_server.set_routes([
+        # First the POST hits the conflict
+        ("POST", "/api/combos", {"error": "combo already exists"}, 409),
+        # Then the PUT succeeds
+        ("PUT", "/api/combos/", {"ok": True, "id": "auto/utility:free"}, 200),
+    ])
+    client = helpers_omniroute.OmniRouteClient(
+        base_url=f"http://127.0.0.1:{stub_server.port}/v1", timeout=3
+    )
+    r = client.create_combo("auto/utility:free", "priority", ["groq/x", "gemini/y"])
+    assert r["ok"] is True, f"PUT retry should succeed: {r!r}"
+    assert r["method"] == "PUT", f"expected method=PUT after conflict, got {r!r}"
+    assert r["status"] == 200
+    # Verify both requests were made in order: POST then PUT
+    methods = [m for m, _ in stub_server.request_log]
+    assert "POST" in methods and "PUT" in methods, (
+        f"expected both POST and PUT requests; log={stub_server.request_log}"
+    )
+    assert methods.index("POST") < methods.index("PUT"), (
+        f"POST must precede the PUT retry; log={methods}"
+    )
+    # The PUT URL must contain the urlencoded combo id
+    put_paths = [p for m, p in stub_server.request_log if m == "PUT"]
+    assert any("auto%2Futility%3Afree" in p for p in put_paths), (
+        f"PUT path must urlencode the combo id (auto/utility:free -> "
+        f"auto%2Futility%3Afree); got {put_paths}"
+    )
+
+
+def test_create_combo_post_succeeds_without_retry(stub_server, helpers_omniroute):
+    """When the POST succeeds (2xx), `create_combo` must NOT retry as PUT —
+    method is 'POST' and the body is returned as-is."""
+    stub_server.set_routes([
+        ("POST", "/api/combos", {"ok": True, "id": "auto/utility:free"}, 201),
+    ])
+    client = helpers_omniroute.OmniRouteClient(
+        base_url=f"http://127.0.0.1:{stub_server.port}/v1", timeout=3
+    )
+    r = client.create_combo("auto/utility:free", "priority", ["groq/x"])
+    assert r["ok"] is True
+    assert r["method"] == "POST"
+    assert r["status"] == 201
+    # No PUT should have been issued
+    assert "PUT" not in [m for m, _ in stub_server.request_log]
+
+
+class TestCombosEndpoint:
+    """api/combos.py glues: live free models (GET /v1/models) -> curate ->
+    gateway POST /api/combos. Exercises the full path via the path-aware
+    StubServer so the curator + client are tested together."""
+
+    @pytest.fixture
+    def stub_helpers_plugins(self, stub_server, monkeypatch):
+        hp = types.ModuleType("helpers.plugins")
+        hp.get_plugin_config = lambda name: {
+            "base_url": f"http://127.0.0.1:{stub_server.port}/v1",
+            "api_key": "",
+            "timeout_seconds": 3,
+        }
+        sys.modules["helpers.plugins"] = hp
+        yield
+        sys.modules.pop("helpers.plugins", None)
+
+    def _run(self, api_combos, payload=None):
+        class _Req:
+            pass
+        return asyncio.run(api_combos.Combos().process(payload or {}, _Req()))
+
+    def test_curates_from_live_free_models(
+        self, stub_server, stub_helpers_plugins, api_combos, helpers_omniroute,
+    ):
+        """Full glue: GET /v1/models returns free + non-free + excluded ids;
+        the endpoint filters to free, curates (dropping flux), and POSTs the
+        combo. The response must be the documented success envelope."""
+        stub_server.set_routes([
+            # Live model catalog: one non-free, one excluded image model,
+            # two valid free chat models (fast + slow reasoner).
+            ("GET", "/v1/models", {"data": [
+                {"id": "openai/gpt-4o"},                # sub tier — not free
+                {"id": "flux-dev:free"},                # free but image — excluded
+                {"id": "groq/llama-4-scout:free"},      # free + valid (fast)
+                {"id": "deepseek/deepseek-r1:free"},    # free + valid (slow)
+            ]}, 200),
+            # Gateway accepts the combo
+            ("POST", "/api/combos", {"ok": True, "id": "auto/utility:free"}, 200),
+        ])
+        result = self._run(api_combos)
+        assert result["ok"] is True, f"expected ok, got {result!r}"
+        assert result["combo_id"] == "auto/utility:free"
+        assert result["selectable_as"] == "omniroute/auto/utility:free"
+        assert result["strategy"] == "priority"
+        # 3 free models seen (gpt-4o is sub, not counted as free)
+        assert result["free_model_count"] == 3
+        # flux excluded -> 2 targets (groq first, deepseek-r1 last)
+        targets = result["targets"]
+        assert result["target_count"] == len(targets) == 2
+        assert targets[0] == "groq/llama-4-scout:free"
+        assert targets[-1] == "deepseek/deepseek-r1:free"
+        assert "flux-dev:free" not in targets
+        # gateway_response envelope
+        assert result["gateway_response"]["status"] == 200
+        assert result["gateway_response"]["method"] == "POST"
+        assert result["error"] is None
+
+    def test_unreachable_gateway_returns_failure_envelope(
+        self, api_combos, monkeypatch,
+    ):
+        """A dead gateway must return the documented failure envelope (ok=False)
+        with a non-empty error, never raise."""
+        hp = types.ModuleType("helpers.plugins")
+        hp.get_plugin_config = lambda name: {
+            "base_url": "http://127.0.0.1:1/v1",  # dead (port 1 reserved)
+            "api_key": "",
+            "timeout_seconds": 1,
+        }
+        sys.modules["helpers.plugins"] = hp
+        try:
+            result = self._run(api_combos)
+            assert result["ok"] is False
+            assert result["combo_id"] == "auto/utility:free"
+            assert result["selectable_as"] == "omniroute/auto/utility:free"
+            assert result["target_count"] == 0
+            assert result["targets"] == []
+            assert result["error"] is not None and result["error"].strip()
+        finally:
+            sys.modules.pop("helpers.plugins", None)
+
+    def test_no_free_models_returns_failure_envelope(
+        self, stub_server, stub_helpers_plugins, api_combos,
+    ):
+        """A reachable gateway with NO free models must return ok=False with
+        a helpful error (not an empty combo)."""
+        stub_server.set_routes([
+            ("GET", "/v1/models", {"data": [
+                {"id": "openai/gpt-4o"},      # sub
+                {"id": "anthropic/claude"},   # sub
+            ]}, 200),
+        ])
+        result = self._run(api_combos)
+        assert result["ok"] is False
+        assert result["free_model_count"] == 0
+        assert result["targets"] == []
+        assert "free" in result["error"].lower()
+
+
+def test_self_check_includes_combos():
+    """v2.6.4: hooks._self_check() must list the new utility-combo files so the
+    inventory fails loudly if either is removed (mirrors the
+    test_self_check_includes_cache / _prompts / _live_py pattern)."""
+    src = open(os.path.join(PLUGIN_ROOT, "hooks.py"), encoding="utf-8").read()
+    assert "api/combos.py" in src, (
+        "hooks._self_check() must list api/combos.py (v2.6.4 combos endpoint)"
+    )
+    assert "helpers/utility_combo.py" in src, (
+        "hooks._self_check() must list helpers/utility_combo.py "
+        "(v2.6.4 utility-combo curator)"
+    )
+
+
+def test_agents_md_documents_utility_combo(agents_md):
+    """v2.6.4: AGENTS.md must document the auto/utility:free route — the
+    invariant (#20) and the v2.6.4 section — so a future contributor knows the
+    curator is the single source of truth and provisioning never touches a
+    preset."""
+    assert "20." in agents_md, "AGENTS.md should document invariant 20 (utility combo)"
+    assert "auto/utility:free" in agents_md
+    assert "utility_combo.py" in agents_md
+    assert "api/combos.py" in agents_md
+    assert "curate_utility_targets" in agents_md
+    # The combo is provisioned in the gateway, never written into a preset
+    assert "never touches a model preset" in agents_md or "never writes the preset" in agents_md
 
 
 # ===========================================================================

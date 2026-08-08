@@ -25,7 +25,7 @@ import os
 log = logging.getLogger(__name__)
 
 PLUGIN_NAME = "omniroute"
-EXPECTED_VERSION = "2.6.2"
+EXPECTED_VERSION = "2.6.4"
 
 # B2: the LiteLLM model id injected into a preset's ``kwargs.fallbacks`` when
 # the user toggles "Use OmniRoute as a fallback". ``omniroute/auto`` lets the
@@ -288,9 +288,11 @@ def _self_check() -> dict:
         "api/test.py",
         "api/dashboard.py",
         "api/usage.py",
+        "api/combos.py",  # v2.6.4: provisions auto/utility:free in the gateway
         "helpers/omniroute_client.py",
         "helpers/last_known.py",
         "helpers/cache.py",
+        "helpers/utility_combo.py",  # v2.6.4: curates the auto/utility:free target list
         "webui/config.html",
         "webui/omniroute-store.js",
         "webui/dashboard.html",

@@ -59,6 +59,13 @@ export function omnirouteDashboard() {
     // "Offline" with no diagnostic, leaving the user stuck).
     lastError: null,
 
+    // Utility combo state. Populated by createUtilityCombo() below.
+    // `utilityComboResult` is either null (never run) or
+    //   { ok: true, count, sample:[ids], method }
+    //   { ok: false, error }
+    utilityComboBusy: false,
+    utilityComboResult: null,
+
     // Auto-recover state. Mirrors omnirouteStore.recoverGateway() in
     // webui/omniroute-store.js. The dashboard uses its own Alpine
     // scope (omnirouteDashboard) so it does not share the settings
@@ -274,27 +281,90 @@ export function omnirouteDashboard() {
 
     // ----------------------------------------------------------------------
     openSettings() {
-      // v2.6.1: ALWAYS navigate directly to the config page. The previous
-      // version (v2.5) tried pluginSettingsPrototype.openConfig() first,
-      // which is the modal-based navigation used in the agent-profile
-      // chrome. When the dashboard is loaded as a standalone page (the
-      // common case — user opens the dashboard via the topbar
-      // "OmniRoute" button or via /usr/plugins/omniroute/webui/dashboard.html),
-      // the prototype EITHER is not registered OR is registered but
-      // openConfig silently does not navigate, so the function returned
-      // without ever hitting the window.location fallback. Result: all
-      // three Settings buttons (header, Mode card, offline empty state)
-      // did nothing on click. Removing the prototype attempt:
-      // - always lands the user on the plugin settings page;
-      // - keeps the same destination URL the config page itself expects;
-      // - removes the dead-code path that caused the user-reported bug.
+      // v2.6.3: open the REAL plugin-settings panel in-SPA. The dashboard
+      // itself is now loaded as an in-SPA modal (openModal, via the
+      // chat-input OmniRoute button), so Alpine and the framework stores
+      // are present. The framework's canonical entry point
+      // ($store.pluginSettingsPrototype.openConfig(name)) opens the
+      // plugin-settings.html wrapper, which injects the `config`/`context`
+      // the plugin's config.html binds to, and loads config.html via
+      // <x-component> -- so the settings page renders with real data.
+      //
+      // The previous approach (window.location.href = ".../config.html")
+      // hard-navigated to a STANDALONE config.html that has no Alpine.js
+      // and no config/context injection (the framework only injects those
+      // inside the plugin-settings.html wrapper). On the standalone page
+      // every Alpine binding was inert -> empty boxes + the
+      // "$store.omnirouteStore undefined" error the user saw ("fail to load
+      // model ... undefined"). Hard nav also reloaded the whole SPA.
+      //
+      // openConfig opens a NEW modal stacked on top of this dashboard
+      // modal; closing it returns here. The dashboard does not use the
+      // pluginSettingsPrototype store, so openConfig's internal cleanup()
+      // is safe to call from here.
       try {
-        // AGENTS.md invariant #8: built-in asset route /plugins/...
-        // (always serves, survives reinstalls). NOT /usr/plugins/...
-        // (404 after reinstall). Same URL recoverGateway() uses below.
-        window.location.href = "/plugins/omniroute/webui/config.html";
+        const store = window.Alpine && window.Alpine.store("pluginSettingsPrototype");
+        if (store && typeof store.openConfig === "function") {
+          store.openConfig("omniroute");
+          return;
+        }
+        // Should not happen in-SPA. If the store is somehow unavailable,
+        // surface it instead of silently hard-navigating to a broken
+        // standalone page.
+        toastFrontendError(
+          "Cannot open the settings panel from here. Open it via Settings -> Plugins -> OmniRoute.",
+          "OmniRoute"
+        );
       } catch (e) {
         toastFrontendError("Cannot open settings: " + e, "OmniRoute");
+      }
+    },
+
+    // ----------------------------------------------------------------------
+    // Create / refresh the `auto/utility:free` combo IN THE GATEWAY via the
+    // plugin backend (POST /api/plugins/omniroute/combos). The backend curates
+    // the target list from the user's live free models (fast + JSON-capable +
+    // >=32k context; drops image/audio/embedding/toy/flaky/deprecated) and
+    // POSTs a priority combo to the gateway's /api/combos. After this
+    // succeeds, `omniroute/auto/utility:free` shows in Agent Zero's model
+    // picker (badged "free") and the user picks it for the Utility slot
+    // themselves — this method never touches the preset.
+    async createUtilityCombo() {
+      if (this.utilityComboBusy) return;
+      this.utilityComboBusy = true;
+      this.utilityComboResult = null;
+      try {
+        const r = await fetch("/api/plugins/omniroute/combos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        let d = null;
+        try { d = await r.json(); } catch (e) { /* non-JSON error body */ }
+        if (!r.ok || !d || !d.ok) {
+          const msg = (d && (d.error || d.gateway_response)) || ("HTTP " + r.status);
+          this.utilityComboResult = { ok: false, error: String(msg) };
+          toastFrontendError("Could not create auto/utility:free: " + msg, "OmniRoute");
+          return;
+        }
+        const targets = Array.isArray(d.targets) ? d.targets : [];
+        this.utilityComboResult = {
+          ok: true,
+          count: d.target_count || targets.length,
+          sample: targets.slice(0, 3),
+          method: (d.gateway_response && d.gateway_response.method) || null,
+          freeCount: d.free_model_count || 0,
+        };
+        toastFrontendInfo(
+          `auto/utility:free ready — ${this.utilityComboResult.count} targets. ` +
+          `Pick "omniroute/auto/utility:free" for the Utility slot.`,
+          "OmniRoute"
+        );
+      } catch (e) {
+        this.utilityComboResult = { ok: false, error: String(e) };
+        toastFrontendError("Could not create auto/utility:free: " + e, "OmniRoute");
+      } finally {
+        this.utilityComboBusy = false;
       }
     },
 

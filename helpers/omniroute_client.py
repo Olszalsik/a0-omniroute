@@ -24,6 +24,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as urlerr
 from urllib import request as urlreq
+from urllib.parse import quote as urlquote
 
 
 PLUGIN_NAME = "omniroute"
@@ -283,6 +284,143 @@ class OmniRouteClient:
         """
         return self._request("GET", "/usage")
 
+    # --------------------------------------------------------------- combos
+    #
+    # v2.6.4 — create / list gateway-side "combos" (the auto/* routes). The
+    # combos API lives at {gateway_root}/api/combos, NOT under /v1, so these
+    # methods derive the root from base_url via ``gateway_root()`` (strip the
+    # trailing /v1). Used by ``api/combos.py`` to provision the
+    # ``auto/utility:free`` route from the user's live free models.
+
+    def _raw_request(
+        self, method: str, url: str, body: Optional[dict] = None
+    ) -> Dict[str, Any]:
+        """Low-level urllib call against an absolute URL.
+
+        Unlike ``_request``, this does NOT raise on non-2xx — it returns the
+        status + parsed body so callers can inspect conflict responses (e.g.
+        a 409 "combo already exists" on POST /api/combos) and react.
+        Returns ``{"ok": bool, "status": int, "body": <json|text|None>, "error": str|None}``.
+        """
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+        req = urlreq.Request(url, data=data, method=method, headers=self._headers())
+        try:
+            with urlreq.urlopen(req, timeout=self.timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                status = int(getattr(resp, "status", 200))
+        except urlerr.HTTPError as e:
+            raw = (
+                e.read().decode("utf-8", errors="replace")
+                if hasattr(e, "read")
+                else str(e)
+            )
+            return {
+                "ok": False,
+                "status": int(e.code),
+                "body": _maybe_json(raw),
+                "error": f"HTTP {e.code}",
+            }
+        except urlerr.URLError as e:
+            return {
+                "ok": False,
+                "status": 0,
+                "body": None,
+                "error": f"unreachable: {e.reason}",
+            }
+        except Exception as e:  # pragma: no cover
+            return {
+                "ok": False,
+                "status": 0,
+                "body": None,
+                "error": f"request failed: {e}",
+            }
+        return {
+            "ok": 200 <= status < 300,
+            "status": status,
+            "body": _maybe_json(raw),
+            "error": None,
+        }
+
+    def create_combo(
+        self,
+        combo_id: str,
+        strategy: str,
+        targets: List[str],
+        config: Optional[dict] = None,
+    ) -> Dict[str, Any]:
+        """Create (or update) a gateway combo.
+
+        POSTs ``{root}/api/combos`` with ``{id, name, strategy, targets:[{model}]}``.
+        On a conflict (the combo already exists — 409, or a 4xx body mentioning
+        "exist"/"duplicate"), retries as ``PUT {root}/api/combos/<urlencoded id>``
+        so the call is idempotent: clicking "Create / refresh" in the dashboard
+        updates the existing combo in place.
+
+        Returns ``{"ok", "status", "body", "method": "POST"|"PUT", "error"}``.
+        """
+        root = gateway_root(self.base_url)
+        body: Dict[str, Any] = {
+            "id": combo_id,
+            "name": combo_id,
+            "strategy": strategy,
+            "targets": [{"model": t} for t in targets],
+        }
+        if config:
+            body["config"] = config
+        r = self._raw_request("POST", f"{root}/api/combos", body)
+        if r["ok"]:
+            return {**r, "method": "POST"}
+        body_txt = str(r.get("body") or "").lower()
+        if (
+            r["status"] in (409, 400)
+            or "exist" in body_txt
+            or "duplicate" in body_txt
+        ):
+            put_url = f"{root}/api/combos/{urlquote(combo_id, safe='')}"
+            r2 = self._raw_request("PUT", put_url, body)
+            return {**r2, "method": "PUT"}
+        return {**r, "method": "POST"}
+
+    def list_combos(self) -> Dict[str, Any]:
+        """Best-effort ``GET {root}/api/combos``.
+
+        Used by the UI to check whether ``auto/utility:free`` already exists
+        and how many targets it has. Tolerates any non-2xx / non-JSON response
+        (returns ``{"ok": False, ...}``) — the gateway is the source of truth.
+        """
+        root = gateway_root(self.base_url)
+        return self._raw_request("GET", f"{root}/api/combos")
+
+
+# ----------------------------------------------------------------- combos utils
+
+
+def _maybe_json(raw: str) -> Any:
+    """Parse JSON if possible, else return the raw text (or None if empty)."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+
+
+def gateway_root(base_url: str) -> str:
+    """Strip the trailing ``/v1`` (and any trailing slash) from an OmniRoute
+    base_url so it points at the gateway root, where ``/api/combos`` lives.
+
+        http://host.docker.internal:8080/v1  ->  http://host.docker.internal:8080
+        http://localhost:8080/               ->  http://localhost:8080
+
+    Used by ``OmniRouteClient.create_combo`` / ``list_combos`` (v2.6.4).
+    """
+    u = (base_url or "").rstrip("/")
+    if u.endswith("/v1"):
+        u = u[:-3]
+    return u.rstrip("/")
+
 
 # ---------------------------------------------------------------- autodetect
 
@@ -402,3 +540,19 @@ async def request_async(
 
 async def usage_async(client: "OmniRouteClient") -> Dict[str, Any]:
     return await asyncio.to_thread(client.usage)
+
+
+async def create_combo_async(
+    client: "OmniRouteClient",
+    combo_id: str,
+    strategy: str,
+    targets: List[str],
+    config: Optional[dict] = None,
+) -> Dict[str, Any]:
+    return await asyncio.to_thread(
+        client.create_combo, combo_id, strategy, targets, config
+    )
+
+
+async def list_combos_async(client: "OmniRouteClient") -> Dict[str, Any]:
+    return await asyncio.to_thread(client.list_combos)

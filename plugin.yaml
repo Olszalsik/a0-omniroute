@@ -1,7 +1,7 @@
 name: omniroute
 title: OmniRoute AI Gateway
-description: Connects Agent Zero to OmniRoute — a local AI gateway exposing 230+ LLM providers through a single OpenAI-compatible /v1/* endpoint with 4-tier auto-fallback (Subscription → API Key → Cheap → Free), token compression (RTK + Caveman), and MCP/A2A support.
-version: 2.6.2
+description: One local gateway (OmniRoute) behind Agent Zero — 290+ LLM providers through a single OpenAI-compatible endpoint, 4-tier auto-fallback (Subscription → API Key → Cheap → Free), and a ready-made auto/utility:free route tuned for the utility model. Free-tier first; no API keys required to start.
+version: 2.6.4
 settings_sections:
   - agent
   - external

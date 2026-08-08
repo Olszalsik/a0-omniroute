@@ -8,7 +8,8 @@
   <script type="module">
     import { store } from "/components/plugins/plugin-settings-store.js";
   </script>
-  <script type="module" src="/plugins/omniroute/webui/dashboard.js"></script>
+  <script defer src="/js/Alpine.js"></script>
+  <script type="module" src="/plugins/omniroute/webui/dashboard.js?v=1786177162"></script>
   <style>
     :root {
       --omni-bg: #0d1117;
@@ -31,6 +32,8 @@
     .omni-pill.bad  { background: rgba(239,68,68,0.15);  color: var(--omni-red); }
     .omni-pill.warn { background: rgba(251,191,36,0.15); color: var(--omni-yellow); }
 
+    .omni-back-btn { padding:4px 10px; border:1px solid var(--omni-border); border-radius:5px; font-size:0.85em; margin-right:12px; background:var(--omni-panel); color:var(--omni-text); cursor:pointer; }
+    .omni-back-btn:hover { background:#1f242c; }
     .omni-actions { margin-left: auto; display: flex; gap: 0.5em; }
     .omni-actions button { padding: 0.45em 0.9em; border-radius: 5px; border: 1px solid var(--omni-border); background: var(--omni-panel); color: var(--omni-text); cursor: pointer; font-size: 0.88em; }
     .omni-actions button:hover { background: #1f242c; }
@@ -75,6 +78,18 @@
 
     .omni-empty { padding: 1.5em; text-align: center; color: var(--omni-muted); }
     .omni-empty button { margin-top: 0.8em; }
+
+    .omni-util-explainer { font-size: 0.88em; color: var(--omni-muted); margin-bottom: 0.8em; line-height: 1.45; }
+    .omni-util-explainer code { background: var(--omni-bg); border: 1px solid var(--omni-border); border-radius: 3px; padding: 0.05em 0.35em; font-size: 0.9em; color: var(--omni-amber); }
+    .omni-util-row { display: flex; gap: 0.7em; align-items: center; flex-wrap: wrap; }
+    .omni-util-row button { padding: 0.5em 1em; border-radius: 5px; border: 1px solid var(--omni-amber); background: linear-gradient(180deg, rgba(180,130,60,0.25) 0%, rgba(140,90,30,0.3) 100%); color: var(--omni-amber); cursor: pointer; font-size: 0.88em; }
+    .omni-util-row button:hover:not(:disabled) { background: linear-gradient(180deg, rgba(180,130,60,0.4) 0%, rgba(140,90,30,0.45) 100%); }
+    .omni-util-row button:disabled { opacity: 0.6; cursor: default; }
+    .omni-util-result { margin-top: 0.8em; font-size: 0.85em; line-height: 1.5; }
+    .omni-util-result.ok { color: var(--omni-green); }
+    .omni-util-result.bad { color: var(--omni-red); }
+    .omni-util-result code { background: var(--omni-bg); border: 1px solid var(--omni-border); border-radius: 3px; padding: 0.05em 0.35em; font-size: 0.9em; color: var(--omni-amber); }
+    .omni-util-result .samples { color: var(--omni-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8em; margin-top: 0.2em; }
   </style>
 </head>
 <body>
@@ -82,7 +97,7 @@
 
     <!-- Header -->
     <div class="omni-header">
-      <a href="/" style="text-decoration:none;color:inherit;padding:4px 10px;border:1px solid #30363d;border-radius:5px;font-size:0.85em;margin-right:12px;">&larr; Back</a><h1>OmniRoute Dashboard</h1>
+      <button type="button" class="omni-back-btn" @click="(typeof closeModal === 'function') ? closeModal() : (window.location.href = '/')" title="Close dashboard">&larr; Back</button><h1>OmniRoute Dashboard</h1>
       <span class="omni-pill" :class="reachable ? 'ok' : 'bad'">
         <span class="dot"></span>
         <span x-text="reachable ? `Online - ${modelCount} models` : 'Offline'"></span>
@@ -120,7 +135,36 @@
       <div class="omni-card">
         <h3>Mode</h3>
         <div class="big-num" x-text="modeLabel" style="font-size:1.3em;"></div>
-        <div class="sub"><a href="#" @click.prevent="openSettings()">Change in settings →</a></div>
+        <div class="sub">Change it in Settings →</div>
+      </div>
+    </div>
+
+    <!-- Utility combo (auto/utility:free) -->
+    <div class="omni-section" x-show="reachable">
+      <h2>Utility route <small>auto/utility:free</small></h2>
+      <div class="omni-util-explainer">
+        Create a free route tuned for Agent Zero's <strong>utility model</strong> — the small, fast
+        slot that runs summaries, memory, and JSON sub-tasks on almost every turn. It's curated
+        from <em>your live free models</em>: fast + JSON-capable + a usable context window, with
+        image/audio/embedding/toy/flaky models dropped and the best models kept as last-resort
+        fallbacks. Selectable in the model picker as <code>omniroute/auto/utility:free</code>.
+      </div>
+      <div class="omni-util-row">
+        <button @click="createUtilityCombo()" :disabled="utilityComboBusy" :title="utilityComboBusy ? 'Creating…' : 'Create or refresh the auto/utility:free combo in the gateway'">
+          <span x-show="!utilityComboBusy">Create / refresh auto/utility:free</span>
+          <span x-show="utilityComboBusy">Creating…</span>
+        </button>
+        <span class="sub" x-show="utilityComboResult && utilityComboResult.ok" x-text="`${utilityComboResult.count} targets · ${utilityComboResult.freeCount} free models seen`"></span>
+      </div>
+      <div class="omni-util-result ok" x-show="utilityComboResult && utilityComboResult.ok">
+        <div>✓ Created <span x-text="utilityComboResult.method ? `(${utilityComboResult.method})` : ''"></span> — pick <code>omniroute/auto/utility:free</code> for the <strong>Utility Model</strong> slot (Settings → Model Presets).</div>
+        <div class="samples" x-show="utilityComboResult.sample && utilityComboResult.sample.length" x-text="utilityComboResult.sample.join(', ') + (utilityComboResult.count > utilityComboResult.sample.length ? ', …' : '')"></div>
+      </div>
+      <div class="omni-util-result bad" x-show="utilityComboResult && !utilityComboResult.ok">
+        <div x-text="utilityComboResult.error"></div>
+        <div style="margin-top:0.3em; color:var(--omni-muted); font-size:0.82em;">
+          You can also create it manually in the gateway's own Combos dashboard at the host URL.
+        </div>
       </div>
     </div>
 
