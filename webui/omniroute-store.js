@@ -34,16 +34,35 @@ import { toastFrontendError, toastFrontendSuccess, toastFrontendInfo } from "/co
 //      <browser-host>:<base_url-port> is the right address. Keep the port
 //      from base_url; if it was the scheme default, URL omits it (correct).
 //
-// Returns ``null`` for a missing/unparseable base_url so callers can show
-// a "not configured" toast instead of opening a broken tab.
+// Returns ``null`` only when no URL can be derived at all. As of v2.6.6 the
+// gateway is published on the Docker host at a known port (default 8080), and
+// the browser is already browsing that host, so when ``base_url`` is missing
+// we fall back to ``http://<browser-host>:<DEFAULT_GATEWAY_PORT>`` instead of
+// returning null. This keeps the "Open gateway" button enabled and functional
+// even before the first status refresh populates ``status.base_url`` — which
+// was the root cause of the permanently grey/disabled button (the status
+// endpoint returns ``configured_base_url``, not ``base_url``; see the getter
+// below).
 //
 // Duplicated (intentionally) in webui/dashboard.js — the dashboard uses its
 // own Alpine scope and does not import the settings store, mirroring the
 // existing recoverGateway()/uninstallGateway() duplication. Keep the two
 // copies in sync.
+const DEFAULT_GATEWAY_PORT = "8080";
 export function gatewayWebUrl(base_url) {
   const raw = (base_url || "").trim();
-  if (!raw) return null;
+  // No configured base_url: derive the gateway web URL from the host the
+  // browser is already on + the default gateway port. The gateway's web UI
+  // is served at the root (http://<host>:8080/ -> 307 -> /dashboard), so
+  // landing on the root is correct.
+  if (!raw) {
+    const browserHost =
+      (typeof window !== "undefined" &&
+        window.location &&
+        window.location.hostname) ||
+      "localhost";
+    return `http://${browserHost}:${DEFAULT_GATEWAY_PORT}`;
+  }
   try {
     const u = new URL(raw);
     let host = u.hostname;
@@ -62,7 +81,12 @@ export function gatewayWebUrl(base_url) {
     const port = u.port ? ":" + u.port : "";
     return `${u.protocol}//${host}${port}`;
   } catch (e) {
-    return null;
+    const browserHost =
+      (typeof window !== "undefined" &&
+        window.location &&
+        window.location.hostname) ||
+      "localhost";
+    return `http://${browserHost}:${DEFAULT_GATEWAY_PORT}`;
   }
 }
 
@@ -80,6 +104,17 @@ export const store = createStore("omnirouteStore", {
   _pollTimer: null,
   _recoverRefreshTimer: null,
   _uninstallRefreshTimer: null,
+
+  // ---- v2.6.6: inline-dashboard state (shown directly on the settings page) ----
+  // Populated by loadDashboard() (POST /api/plugins/omniroute/dashboard) and
+  // createUtilityCombo() (POST /api/plugins/omniroute/combos). Mirrors the
+  // shape the standalone dashboard.js uses, so the same /dashboard endpoint
+  // backs both surfaces. Null/empty until first load.
+  dash: null,                 // full dashboard payload (provider_count, models, ...)
+  dashBusy: false,
+  dashError: null,
+  utilityComboBusy: false,
+  utilityComboResult: null,   // {ok, count, sample, method, freeCount} | {ok:false, error}
 
   // ---- computed labels (used by the template) ----
   get installState() {
@@ -100,13 +135,21 @@ export const store = createStore("omnirouteStore", {
   },
 
   // ---- v2.6.5: gateway web-UI URL (browser-reachable) ----
-  // Reads the configured base_url (or the last probed status.base_url) and
+  // Reads the configured base_url (or the last probed status base_url) and
   // rewrites it to the gateway's own web UI root for the current browser
   // host. See the module-level gatewayWebUrl() helper for the transforms.
+  //
+  // v2.6.6: the status endpoint returns ``configured_base_url`` (NOT
+  // ``base_url``) — the old getter read ``status.base_url`` which was always
+  // undefined, so after a refresh the button still relied solely on
+  // ``_config.base_url`` and stayed grey when the injected settings had no
+  // base_url for the current scope. We now read ``configured_base_url`` too,
+  // and the module-level helper falls back to ``<browser-host>:8080`` when no
+  // base_url is available anywhere, so the button is never grey.
   get gatewayWebUrl() {
     const base =
       (this._config && this._config.base_url) ||
-      (this.status && this.status.base_url) ||
+      (this.status && (this.status.configured_base_url || this.status.base_url)) ||
       "";
     return gatewayWebUrl(base);
   },
@@ -139,7 +182,14 @@ export const store = createStore("omnirouteStore", {
     } catch (e) {
       this.installScript = "# (could not load install-omniroute.ps1 from plugin assets)";
     }
-    this.refresh();
+    // v2.6.6: load the inline dashboard + auto-refresh the auto/utility-free
+    // combo as soon as we know the gateway is up, so the settings page shows
+    // live state immediately and the combo picks up any newly-enabled free
+    // providers without the user clicking anything (#1 + #4).
+    this.refresh().then(() => {
+      this.loadDashboard();
+      if (this.installState === "ready") this.createUtilityCombo();
+    });
   },
 
   bindConfig(config) {
@@ -167,6 +217,11 @@ export const store = createStore("omnirouteStore", {
     this._lastModelsResponse = null;
     this.recovering = false;
     this.uninstalling = false;
+    this.dash = null;
+    this.dashBusy = false;
+    this.dashError = null;
+    this.utilityComboBusy = false;
+    this.utilityComboResult = null;
   },
 
   // ---- actions ----
@@ -210,6 +265,84 @@ export const store = createStore("omnirouteStore", {
       this.busy = false;
     }
   },
+
+  // ---- v2.6.6: inline dashboard (Settings page) ----
+  // Fetches the rich dashboard payload (tier counts + model list + latency)
+  // from the same /api/plugins/omniroute/dashboard endpoint the standalone
+  // dashboard modal uses, so the user sees the live gateway state directly on
+  // the plugin settings page without clicking "Open dashboard".
+  async loadDashboard() {
+    this.dashBusy = true;
+    this.dashError = null;
+    try {
+      const r = await fetch("/api/plugins/omniroute/dashboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      this.dash = await r.json();
+    } catch (e) {
+      this.dashError = String(e);
+      this.dash = null;
+    } finally {
+      this.dashBusy = false;
+    }
+  },
+
+  // Create / refresh the auto/utility-free combo IN THE GATEWAY from the user's
+  // live free models. The backend (api/combos.py) curates the target list and
+  // upserts the combo by name (POST then PUT-by-UUID). After this succeeds,
+  // omniroute/auto/utility-free appears in the model picker and is selectable
+  // for the Utility slot. Idempotent (PUT refreshes an existing combo), so
+  // calling it on every settings-page load auto-picks-up newly-enabled free
+  // providers — the "auto-detect new free models" behavior the user asked for.
+  async createUtilityCombo() {
+    if (this.utilityComboBusy) return;
+    this.utilityComboBusy = true;
+    this.utilityComboResult = null;
+    try {
+      const r = await fetch("/api/plugins/omniroute/combos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      let d = null;
+      try { d = await r.json(); } catch (e) { /* non-JSON error body */ }
+      if (!r.ok || !d || !d.ok) {
+        const msg = (d && (d.error || d.gateway_response)) || ("HTTP " + r.status);
+        this.utilityComboResult = { ok: false, error: String(msg) };
+        return;
+      }
+      const targets = Array.isArray(d.targets) ? d.targets : [];
+      this.utilityComboResult = {
+        ok: true,
+        count: d.target_count || targets.length,
+        sample: targets.slice(0, 3),
+        method: (d.gateway_response && d.gateway_response.method) || null,
+        freeCount: d.free_model_count || 0,
+      };
+    } catch (e) {
+      this.utilityComboResult = { ok: false, error: String(e) };
+    } finally {
+      this.utilityComboBusy = false;
+    }
+  },
+
+  // ---- inline-dashboard computed getters (for the settings template) ----
+  get dashModelCount() { return (this.dash && this.dash.provider_count) || 0; },
+  get dashFreeCount()  { return (this.dash && this.dash.free_count) || 0; },
+  get dashCheapCount() { return (this.dash && this.dash.cheap_count) || 0; },
+  get dashKeyCount()   { return (this.dash && this.dash.key_count) || 0; },
+  get dashSubCount()   { return (this.dash && this.dash.sub_count) || 0; },
+  get dashLatency()    { return (this.dash && this.dash.latency_ms) || 0; },
+  get dashBaseUrl()    { return (this.dash && this.dash.base_url) || ""; },
+  get dashModels()     { return (this.dash && this.dash.models) || []; },
+  get dashReachable()  { return !!(this.dash && this.dash.reachable) || this.installState === "ready"; },
+  get pctFree()  { return this.dashModelCount ? (this.dashFreeCount  / this.dashModelCount) * 100 : 0; },
+  get pctCheap() { return this.dashModelCount ? (this.dashCheapCount / this.dashModelCount) * 100 : 0; },
+  get pctKey()   { return this.dashModelCount ? (this.dashKeyCount   / this.dashModelCount) * 100 : 0; },
+  get pctSub()   { return this.dashModelCount ? (this.dashSubCount   / this.dashModelCount) * 100 : 0; },
 
   async test() {
     this.busy = true;

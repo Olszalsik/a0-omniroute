@@ -3,13 +3,13 @@ OmniRoute - utility combo provisioning endpoint.
 
 Route: POST /api/plugins/omniroute/combos
 
-Creates (or refreshes) the ``auto/utility:free`` combo IN THE OMNIROUTE
+Creates (or refreshes) the ``auto/utility-free`` combo IN THE OMNIROUTE
 GATEWAY — a free-only, priority-ordered route tuned for Agent Zero's
 utility model (summaries, memory, JSON sub-tasks). The combo is curated
 dynamically from the user's LIVE free models (fetched via ``GET /v1/models``)
 so it adapts to whichever providers they have enabled, and persisted in the
 gateway's DB (survives container restart). After this succeeds,
-``omniroute/auto/utility:free`` appears in Agent Zero's model picker and can
+``omniroute/auto/utility-free`` appears in Agent Zero's model picker and can
 be selected for the Utility slot.
 
 Why this is a backend endpoint and not pure browser JS: the gateway's
@@ -19,15 +19,15 @@ the live free model list + the plugin's tier classifier + the
 testable place and avoids cross-origin browser calls to the gateway. The
 plugin already proxies ``/v1/models`` the same way (see ``api/models.py``).
 
-Request body: empty, or ``{"id": "auto/utility:free"}`` (the id is fixed for
+Request body: empty, or ``{"id": "auto/utility-free"}`` (the id is fixed for
 now; the field is accepted so future variants can override it without a new
 endpoint).
 
 Response shape (success):
   {
     "ok": true,
-    "combo_id": "auto/utility:free",
-    "selectable_as": "omniroute/auto/utility:free",
+    "combo_id": "auto/utility-free",
+    "selectable_as": "omniroute/auto/utility-free",
     "strategy": "priority",
     "target_count": N,
     "targets": ["groq/...", "gemini/...", ...],     # up to 20
@@ -40,8 +40,8 @@ Response shape (failure — gateway unreachable / no free models / gateway
 rejected the combo):
   {
     "ok": false,
-    "combo_id": "auto/utility:free",
-    "selectable_as": "omniroute/auto/utility:free",
+    "combo_id": "auto/utility-free",
+    "selectable_as": "omniroute/auto/utility-free",
     "target_count": 0,
     "targets": [],
     "free_model_count": 0,
@@ -52,7 +52,7 @@ rejected the combo):
 The handler is side-effect-free with respect to the plugin folder: it only
 reads the live model list and POSTs one combo to the gateway. No preset,
 ``config.json``, or on-disk state is touched — the user picks
-``omniroute/auto/utility:free`` for the Utility slot themselves.
+``omniroute/auto/utility-free`` for the Utility slot themselves.
 """
 
 from helpers.api import ApiHandler  # type: ignore
@@ -191,14 +191,15 @@ def _fail(
 def _combo_create_error(gw: dict) -> str:
     """Turn a failed gateway combo response into a user-actionable message.
 
-    The gateway's ``POST /api/combos`` is an *authenticated admin action*: it
-    returns **401 Authentication required** when no API key is configured, even
-    though listing free models (``GET /v1/models``) is public. A 401 is by far
-    the most likely failure for a free-tier-first user (the plugin ships with
-    no ``api_key``), so we call it out by name and point at the exact setting
-    instead of burying it in a generic "gateway rejected the combo" string —
-    which is what made the failure look like a mysterious bug rather than a
-    one-field config fix.
+    On a default local gateway, combo creation (``POST /api/combos``) is
+    **unauthenticated** — listing free models (``GET /v1/models``) and creating
+    combos both work with no API key. A **401 Authentication required** only
+    appears when the gateway has been configured to require an admin token for
+    its management endpoints (``OMNIROUTE_API_KEY`` set on the gateway). When
+    that happens we call it out by name and point at the exact setting instead
+    of burying it in a generic "gateway rejected the combo" string — which is
+    what made the old v2.6.4 failure (actually a colon-in-name 400, misread as
+    a 401) look like a mysterious bug rather than a fixable config issue.
     """
     status = gw.get("status")
     if status == 401:

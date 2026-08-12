@@ -88,14 +88,20 @@ A self-contained A0 plugin (id `omniroute`, version `2.5.4`):
    installer lives in `webui/`, which is served by BOTH routes (path-traversal guard allows
    `webui/` and `extensions/webui/`), but only `/plugins/...` is the version that survives
    reinstalls — the user-plugin route would 404 the file. Always fetch from `/plugins/...`.
-9. **The plugin dashboard is opened in-SPA via `openModal('/plugins/omniroute/webui/dashboard.html')`
-   (the `/plugins/...` asset route), never a hard `window.location.href`.** Since v2.6.5 the
-   chat-input bottom pill is a **no-op** (removed — it duplicated the status already shown on
+9. **The dashboard is shown INLINE on the Settings page (v2.6.6); the standalone
+   `dashboard.html` modal is kept but no longer opened from the Settings page.** Since v2.6.5
+   the chat-input bottom pill was a no-op (removed — it duplicated the status already shown on
    the plugin pages and opened the *internal* dashboard, which users confused with the
-   gateway's own web UI). The "open the dashboard" action now lives on the Settings page as an
-   "Open dashboard" button calling `openModal('/plugins/omniroute/webui/dashboard.html')`.
-   `openModal` is the framework global that loads the page in-SPA (Alpine + stores present);
-   hard-navigating to a standalone `dashboard.html` would reload the SPA. The
+   gateway's own web UI). v2.6.6 then removed the Settings-page "Open dashboard" button too:
+   the live dashboard state (model counts, tier breakdown bar, the `auto/utility-free` creator)
+   is now rendered directly inside `webui/config.html`, bound to `$store.omnirouteStore` getters
+   (`dashModelCount`, `pctFree`, …) populated by `loadDashboard()` (POST
+   `/api/plugins/omniroute/dashboard`) and `createUtilityCombo()` (POST
+   `/api/plugins/omniroute/combos`). The standalone `webui/dashboard.html` + `dashboard.js` are
+   KEPT (they reuse the same `/dashboard` endpoint and are the surface for any future direct
+   `openModal('/plugins/omniroute/webui/dashboard.html')` use); `openModal` is the framework
+   global that loads a page in-SPA (Alpine + stores present) — never hard-navigate to a
+   standalone `dashboard.html` (that would reload the SPA). The
    `extensions/webui/chat-input-bottom-actions-end/omniroute-button.html` file is KEPT as a
    no-op so the extension slot stays registered — do not re-add a button there.
 10. **Hook signatures are `async def install/pre_update/uninstall`.** A0 v2.5 awaits all three
@@ -177,7 +183,7 @@ A self-contained A0 plugin (id `omniroute`, version `2.5.4`):
     explicit-removal counterpart to invariant #12 (which forbids
     installing the gateway from `hooks.install()`). The two invariants
     together are the full side-effect-free contract.
-20. **The `auto/utility:free` combo is curated server-side from live free models,
+20. **The `auto/utility-free` combo is curated server-side from live free models,
     and provisioning it never touches a model preset.** The combo is a
     gateway-side route (created via `POST /api/combos` on the gateway root, NOT
     `/v1`), provisioned by `api/combos.py` from the user's *live* free model list
@@ -185,12 +191,22 @@ A self-contained A0 plugin (id `omniroute`, version `2.5.4`):
     `helpers/utility_combo.py:curate_utility_targets`. The curator is the ONE
     place that decides which free models suit the utility slot (fast +
     JSON-capable + a usable context window; image/audio/embedding/toy/flaky/
-    deprecated ids dropped; best-but-slow reasoners kept as last-resort
+    deprecated ids dropped; `^auto/` meta-routes excluded so the combo never
+    targets itself or another combo; best-but-slow reasoners kept as last-resort
     fallbacks, never excluded). The dashboard button only creates/refreshes
     the combo in the gateway — it does NOT write the user's preset; the user
-    picks `omniroute/auto/utility:free` for the Utility slot themselves. The
-    `POST /api/combos` call is idempotent: a 409/400 "already exists" is
-    retried as `PUT /api/combos/<id>` so "Create / refresh" updates in place.
+    picks `omniroute/auto/utility-free` for the Utility slot themselves. The
+    combo name is **colon-free** (`auto/utility-free`, NOT `auto/utility:free` —
+    the gateway bans colons in names with a 400; the selectable LiteLLM id is
+    the slugified name `omniroute/auto/utility-free`). The create call is
+    **idempotent via upsert-by-name** (see the verified gateway combo contract
+    in `helpers/omniroute_client.py:create_combo`): `GET /api/combos` → find the
+    combo whose `name` matches → `PUT /api/combos/<UUID>` to refresh in place;
+    if none exists, `POST /api/combos`. The gateway keys combos by its own UUID
+    and ignores any `id`/`slug` we send, and a duplicate-name POST is rejected —
+    so PUT-by-name (the old v2.6.4 retry) 404s and must never be used. Creating
+    a combo is **unauthenticated on a default local gateway** (no API key
+    needed); a 401 only appears if the gateway has `OMNIROUTE_API_KEY` set.
     Don't hand-curate the target list in the UI, don't add a second combo id,
     and don't mutate the preset from this path.
 21. **The "Open gateway ↗" button opens the OmniRoute gateway's OWN web UI
@@ -200,18 +216,24 @@ A self-contained A0 plugin (id `omniroute`, version `2.5.4`):
     and rewrites the container-side hostname (`host.docker.internal` /
     `localhost` / `127.0.0.1` / `0.0.0.0` — names the *browser* cannot resolve)
     to `window.location.hostname` (the host the user is browsing Agent Zero
-    from), keeping the port. It returns `null` for a missing/unparseable URL,
-    and the buttons are `:disabled` on `null` so we never open a blank tab.
-    The helper lives in **two** places — `webui/omniroute-store.js` (exported
-    `gatewayWebUrl`, used by the Settings page's `openGateway()`) and
-    `webui/dashboard.js` (module-local `function gatewayWebUrl`, used by
-    `openGatewayDashboard()`) — duplicated on purpose because the dashboard
-    uses its own Alpine scope and does not import the settings store (same
-    reason `recoverGateway()`/`uninstallGateway()` are duplicated). Keep the
-    two copies byte-for-byte in sync. Do NOT point this button at the plugin's
-    internal `dashboard.html` — that's the "Open dashboard" button's job
-    (invariant #9); the gateway UI is a separate page the gateway itself
-    serves on the same host:port as `/v1`.
+    from), keeping the port. As of v2.6.6 it **never returns null / is never
+    `:disabled`**: when no `base_url` is configured (or it's unparseable) it
+    falls back to `http://<browser-host>:8080` (the gateway is published on the
+    same host the user is browsing from). The button is also enlarged + given a
+    distinct amber style (`.omni-gateway-btn`) so it's no longer the small grey
+    button that read as broken. The root cause of the old grey/disabled button
+    was two-fold: the store getter read `status.base_url` (always undefined — the
+    status endpoint returns `configured_base_url`), AND the helper returned null
+    with no fallback; both are fixed. The helper lives in **two** places —
+    `webui/omniroute-store.js` (exported `gatewayWebUrl`, used by the Settings
+    page's `openGateway()`) and `webui/dashboard.js` (module-local `function
+    gatewayWebUrl`, used by `openGatewayDashboard()`) — duplicated on purpose
+    because the dashboard uses its own Alpine scope and does not import the
+    settings store (same reason `recoverGateway()`/`uninstallGateway()` are
+    duplicated). Keep the two copies byte-for-byte in sync. Do NOT point this
+    button at the plugin's internal `dashboard.html` — the dashboard content is
+    now inlined on the Settings page (invariant #9); the gateway UI is a
+    separate page the gateway itself serves on the same host:port as `/v1`.
 
 ## Build discipline
 - **Stdlib-only helpers.** `helpers/omniroute_client.py` must not depend on `requests`, `httpx`,
@@ -274,7 +296,7 @@ A self-contained A0 plugin (id `omniroute`, version `2.5.4`):
   atomic writer — keep them in lockstep.
 - **API endpoints (one handler per file):** `api/status.py`, `api/models.py`, `api/test.py`,
   `api/dashboard.py`, `api/usage.py`, `api/combos.py` (v2.6.4 — provisions the
-  `auto/utility:free` combo in the gateway from the user's live free models).
+  `auto/utility-free` combo in the gateway from the user's live free models).
 - **Utility-combo curator (pure, no I/O):** `helpers/utility_combo.py` — the single
   source of truth for which free models suit the utility slot (exclusions, tier
   ordering, slow-model reservation, cap). Unit-tested directly by
@@ -478,7 +500,19 @@ developers. The fallback picker rows were also redesigned to mirror the primary-
 (provider `<select>` on the left + model-name input with magnifier search in the middle); see
 `_model_config/webui/model-field.html`.
 
-## v2.6.4 — `auto/utility:free` utility route (2026-08-08)
+## v2.6.4 — `auto/utility-free` utility route (2026-08-08)
+
+> ⚠ **Corrections in v2.6.6 (see that section below).** This entry shipped
+> with two empirically-wrong claims about the gateway combo API: (1) the combo
+> name used a colon (`auto/utility:free`) — the gateway bans colons in names
+> (400), so creation silently failed; renamed to `auto/utility-free`. (2) the
+> idempotency retry was `PUT /api/combos/<name>`, but the gateway keys combos
+> by its own UUID and ignores our id, so PUT-by-name 404s — replaced with
+> upsert-by-name (GET find → PUT by UUID / POST). (3) "combo creation needs a
+> key (401)" was a misdiagnosis of the colon-400; creation is unauthenticated
+> on a default local gateway. The naming references below are updated to the
+> canonical `auto/utility-free`; the superseded contract claims are marked
+> ⚠v2.6.6 inline.
 
 **Problem.** Agent Zero's **utility model** is the small/fast slot that fires on
 nearly every turn (history/topic summarization, chat renaming, behaviour-ruleset
@@ -494,7 +528,7 @@ one with no ordering and no filtering of non-text/toy models.
 
 **Fix — a ready-made free route curated from the user's live models.**
 - **`helpers/utility_combo.py`** (NEW, pure — no I/O) curates the target list for
-  `auto/utility:free`:
+  `auto/utility-free`:
   - **Excludes** non-utility ids: image (`flux`, `dall-e`, `imagen`, `seedream`,
     `kling`, `sora`, …), video (`veo`, `video`), audio (`whisper`, `tts`, `bark`,
     `playai`, `elevenlabs`, …), embeddings/rerank/moderation/clip (`embed`, `bge`,
@@ -516,8 +550,12 @@ one with no ordering and no filtering of non-text/toy models.
   - **Caps at `MAX_TARGETS = 12`**; original gateway order is preserved within
     each tier so re-runs with the same enabled providers produce a stable combo.
 - **`helpers/omniroute_client.py`** (MODIFIED) adds the gateway-combos client:
-  `create_combo` (POST `{root}/api/combos`, retry as `PUT /api/combos/<urlencoded id>`
-  on 409/400/"exist"/"duplicate" → idempotent), `list_combos`, `_raw_request`
+  `create_combo` ⚠v2.6.6 (the v2.6.4 body did `POST {root}/api/combos` then
+  retried as `PUT /api/combos/<urlencoded id>` on 409/400/"exist"/"duplicate" —
+  but the gateway keys combos by its own UUID and ignores our `id`, so the
+  PUT-by-name 404'd and never updated; v2.6.6 rewrites it as upsert-by-name:
+  `GET /api/combos` → find by `name` → `PUT /api/combos/<UUID>` or `POST`),
+  `list_combos`, `_find_combo_by_name` (v2.6.6), `_raw_request`
   (low-level urllib that returns status+body without raising, so conflict
   responses can be inspected), `gateway_root` (strips trailing `/v1` so the
   combos API at the gateway root is reachable), and `create_combo_async` /
@@ -526,37 +564,42 @@ one with no ordering and no filtering of non-text/toy models.
 - **`api/combos.py`** (NEW) — `POST /api/plugins/omniroute/combos` handler. Glues
   the above together: `health_async` (one `GET /v1/models`) → filter
   `classify_tier == "free"` → `curate_utility_targets` → `create_combo_async` to
-  the gateway. Returns `{ok, combo_id, selectable_as: "omniroute/auto/utility:free",
+  the gateway. Returns `{ok, combo_id, selectable_as: "omniroute/auto/utility-free",
   strategy: "priority", target_count, targets:[…20], free_model_count,
   gateway_response:{status, method, body}, error}`. Side-effect-free w.r.t. the
   plugin folder: reads the live model list + POSTs one combo to the gateway; no
   preset / `config.json` / on-disk state touched.
 - **`webui/dashboard.html` + `webui/dashboard.js`** (MODIFIED) — "Utility route"
-  section with a "Create / refresh `auto/utility:free`" button calling
+  section with a "Create / refresh `auto/utility-free`" button calling
   `createUtilityCombo()` → the endpoint above. Result pill shows target count +
   sample ids; error path points the user at the gateway's own Combos dashboard.
+  (v2.6.6: the same creator is also inlined on the Settings page — see v2.6.6.)
 
-**Selectable as.** `omniroute/auto/utility:free` in the model picker (badged
-"free" — the tier classifier already badges `auto/.*:free` as free, no tier-code
-change). The user picks it for the **Utility Model** slot in Settings → Model
-Presets; this path never writes the preset.
+**Selectable as.** `omniroute/auto/utility-free` in the model picker (badged
+"free" — the tier classifier already badges ids ending in `-free`/`:free` as
+free, so `auto/utility-free` matches with no tier-code change). The user picks
+it for the **Utility Model** slot in Settings → Model Presets; this path never
+writes the preset.
 
-**Idempotency.** Clicking "Create / refresh" again updates the existing combo in
-place: `create_combo` retries `POST` as `PUT` on a conflict, so the combo always
-reflects the user's current live free models.
+**Idempotency.** ⚠v2.6.6 — the v2.6.4 claim here ("retries `POST` as `PUT` on a
+conflict") was wrong: `PUT /api/combos/<name>` 404s because the gateway keys by
+UUID. The real idempotent pattern is upsert-by-name (`GET /api/combos` → find by
+`name` → `PUT /api/combos/<UUID>` to refresh, else `POST`). Clicking "Create /
+refresh" again updates the existing combo in place, so the combo always reflects
+the user's current live free models.
 
-**Auth asymmetry — combo *creation* needs a key, free-model *use* does not.**
-`GET /v1/models` (listing free models) is public; `POST /api/combos` (creating a
-combo) is an authenticated gateway-admin action that returns **401
-Authentication required** with no key. The plugin ships with no `api_key`, so a
-free-tier-first user who clicks "Create / refresh" with no key gets a 401. This
-is NOT a bug — `api/combos.py:_combo_create_error` detects the 401 and returns a
-message telling the user to set the OmniRoute API key in Settings (the gateway's
-control token, shown in the gateway UI at the host URL). Do NOT try to make
-combo creation work without a key (the gateway forbids it); instead keep the
-401-specific message accurate. No-key users can still pick an existing free
-combo the gateway already ships (`auto/best-free`, `auto/coding:free`) for the
-Utility slot without creating anything.
+**Auth asymmetry — ⚠v2.6.6 corrected.** The v2.6.4 claim that "combo *creation*
+needs a key (401 without one)" was a misdiagnosis: the actual failure was a
+colon-in-name 400, misread as a 401. On a **default local gateway**, both
+`GET /v1/models` (listing free models) and `POST /api/combos` (creating a combo)
+are **unauthenticated** — no key needed. A `401 Authentication required` only
+appears if the gateway has been configured to require an admin token
+(`OMNIROUTE_API_KEY` set on the gateway); in that case `api/combos.py:
+_combo_create_error` detects the 401 and returns a message telling the user to
+set the OmniRoute API key in Settings (the gateway's control token, shown in the
+gateway UI at the host URL). No-key users can also pick an existing free combo
+the gateway already ships (`auto/best-free`, `auto/coding:free`) for the Utility
+slot without creating anything.
 
 **Smoke coverage.** `tests/smoke.py` adds tests for the curator (exclusions,
 fast→slow ordering, cap + slow reservation), the pure `gateway_root` helper,
@@ -586,8 +629,11 @@ the chat input.
       offline").
     - *"open the dashboard"* — a new **"Open dashboard"** button on
       `config.html` calls `openModal('/plugins/omniroute/webui/dashboard.html')`,
-      so the model browser + the `auto/utility:free` creator stay reachable now
-      that the pill is gone.
+      so the model browser + the `auto/utility-free` creator stay reachable now
+      that the pill is gone. ⚠v2.6.6: this "Open dashboard" button was then
+      *removed* from `config.html` — the dashboard content (counts, tier bar, the
+      `auto/utility-free` creator) is now shown INLINE on the Settings page, so
+      the extra click is gone. The standalone `dashboard.html` modal is kept.
 - **Added an "Open gateway ↗" button to BOTH pages** (`config.html` header row
   + `dashboard.html` actions row). It opens the OmniRoute gateway's OWN web UI
   (providers, combos, API keys, logs) at `http://<host>:8080` in a new tab — the
@@ -599,6 +645,9 @@ the chat input.
   names; the gateway is published on the same host the user is browsing from),
   keeping the port. `null` on missing/unparseable input → the button is
   `:disabled` and shows a "not configured" tooltip, never a blank tab.
+  ⚠v2.6.6: the `null`/`:disabled` behavior was removed — the helper now falls
+  back to `http://<browser-host>:8080` when no `base_url` is configured, so the
+  button is always enabled (and enlarged). See v2.6.6.
 - The helper is **duplicated** in `webui/omniroute-store.js` (exported, used by
   `$store.omnirouteStore.openGateway()` on the Settings page) and
   `webui/dashboard.js` (module-local, used by `openGatewayDashboard()` on the
@@ -607,11 +656,14 @@ the chat input.
   `uninstallGateway()` are duplicated). The two copies must stay in sync.
 
 **Why two buttons, not one.** "Open dashboard" opens the plugin's *internal*
-model browser (your live models, tiers, the `auto/utility:free` creator) as an
+model browser (your live models, tiers, the `auto/utility-free` creator) as an
 in-SPA modal. "Open gateway ↗" opens the *gateway's own* admin page in a new
 browser tab. They are different pages serving different purposes; conflating
 them (as the old pill did) is exactly what hid the gateway UI from the user.
-The `↗` glyph marks the new-tab/external one.
+The `↗` glyph marks the new-tab/external one. ⚠v2.6.6: on the Settings page
+there is now only ONE button ("Open gateway ↗") — the "Open dashboard" button
+was removed because the dashboard content is inlined directly on the page.
+The standalone `dashboard.html` modal keeps its own "Open gateway ↗" button.
 
 **Files.** `plugin.yaml` (2.6.4 → 2.6.5 + description mentions the gateway
 link), `hooks.py` + `execute.py` (EXPECTED_VERSION → 2.6.5), the no-op bottom
@@ -623,9 +675,97 @@ button, `webui/config.html` + `webui/dashboard.html` (the buttons),
 tests pin both buttons on both pages, the store + dashboard helpers, and the
 pure `gatewayWebUrl` transforms (container-side hostname rewrite, `/v1`
 stripping, port preservation, `null` on bad input) via a Node harness that
-loads the store as a classic script with `createStore` stubbed.
+loads the store as a classic script with `createStore` stubbed. ⚠v2.6.6: the
+`null`-on-bad-input assertion was replaced — the helper now returns
+`http://<browser-host>:8080` for empty/unparseable input (never null).
 
 **Auth note still applies.** The "Open gateway ↗" button lands the user on the
 gateway UI where they can grab the control token / manage combos; but creating
-the `auto/utility:free` combo still needs that API key in the plugin's
-Settings (see the v2.6.4 "Auth asymmetry" note above).
+the `auto/utility-free` combo still needs that API key in the plugin's
+Settings (see the v2.6.4 "Auth asymmetry" note above). ⚠v2.6.6: this sentence
+is superseded — combo creation is unauthenticated on a default local gateway;
+the 401 only appears if the gateway has `OMNIROUTE_API_KEY` set. See v2.6.6.
+
+## v2.6.6 — inline dashboard, fixed gateway button, working utility route (2026-08-10)
+
+Four user-reported issues, all fixed in one pass. The root cause of #1/#2 was a
+store getter reading the wrong status field; the root cause of #3/#4 was a
+colon in the combo name (gateway 400) plus a wrong idempotency retry
+(PUT-by-name 404). All four were validated against the live gateway.
+
+**#1 — Dashboard inlined onto the Settings page.** The user did not want to
+click a separate "Open dashboard" button to see the live state. `webui/config.html`
+now renders the dashboard INLINE: a quick-stats row (model count + tier split +
+latency + base URL), a tier-breakdown bar (free/cheap/key/sub proportions), and
+the `auto/utility-free` creator — all bound to `$store.omnirouteStore` getters
+(`dashModelCount`, `dashFreeCount`, `pctFree`, …) populated by `loadDashboard()`
+(POST `/api/plugins/omniroute/dashboard`, the same endpoint the standalone
+dashboard uses). The "Open dashboard" button on `config.html` is REMOVED; the
+standalone `dashboard.html` modal is kept (invariant #9). New CSS: `.omni-stat-grid`,
+`.omni-stat-card`, `.omni-tier-bar`, `.omni-tier-legend`.
+
+**#2 — "Open gateway ↗" button enlarged + fixed (was grey/disabled/non-functional).**
+Two bugs: (a) the store `gatewayWebUrl` getter read `status.base_url`, which is
+always `undefined` — the status endpoint returns `configured_base_url` (see
+`api/status.py`). Fixed to read `status.configured_base_url || status.base_url`.
+(b) the `gatewayWebUrl(base_url)` helper returned `null` for a missing
+`base_url`, and the button was `:disabled` on `null` — so before the first
+refresh populated status (or when the injected settings had no `base_url` for
+the current scope) the button stayed permanently grey. Fixed: the helper now
+falls back to `http://<browser-host>:8080` (`DEFAULT_GATEWAY_PORT`) when no
+`base_url` is available, so it NEVER returns null and the button is NEVER
+disabled. The button is also enlarged + restyled (`.omni-gateway-btn`, amber
+gradient) so it reads as a primary action, not a broken grey stub. The same
+helper fix is mirrored in `webui/dashboard.js` (the duplicated copy — invariant #21).
+
+**#3 — `auto/utility-free` selectable in the model picker.** The combo was
+never actually created in the gateway, so `omniroute/auto/utility-free` never
+appeared in `/v1/models` and the picker couldn't list it. Root cause: the combo
+NAME contained a colon (`auto/utility:free`), and the gateway bans colons in
+names (400 "Name can only contain letters, numbers, spaces, -, _, /, ., [ and
+]"). Renamed to `auto/utility-free` (colon-free; slash preserved in the
+slugified model id). The tier classifier already badges ids ending in `-free`
+as "free" (`_TIER_FREE_PATTERNS` includes `r"-free"`), so `auto/utility-free`
+is badged free with no classifier change. The built-in `auto/coding:free`,
+`auto/coding:fast`, `auto/best-free` already exist in `/v1/models` and ARE
+selectable as `omniroute/auto/coding:free` etc. — the picker does a live `GET`
+with no colon filtering, so they were always available; the user couldn't find
+them because the picker filters by the current model-name query.
+
+**#4 — Auto-detect new free models.** `createUtilityCombo()` now runs
+automatically once on Settings-page load (after the first `refresh()` resolves
+and `installState === "ready"`), and the standalone dashboard's `init()` auto-
+calls it after the first `forceRefresh()`. Because `create_combo` is idempotent
+(upsert-by-name), re-running it re-curates from the user's CURRENT live free
+models — so newly-enabled providers are picked up with no manual curation. The
+curator (`helpers/utility_combo.py`) added `r"^auto/"` to `_EXCLUDE_PATTERNS`
+so the combo never targets itself or another `auto/*` meta-route (those are
+classified "free" via the `-free`/`:free` pattern and would otherwise be curated
+into their own target list → recursive routing).
+
+**Verified gateway combo API contract (empirical, 2026-08-10).** Documented
+here once so it is not re-derived. `POST /api/combos` with body
+`{"name","strategy","models":[{"model":"<id>"}]}` (the field is `models`, NOT
+`targets` — `targets` is ignored and silently creates an empty combo). Colons
+are BANNED in `name` (400); slashes are preserved. The gateway assigns its own
+UUID `id` and ignores any `id`/`slug` we send; the combo's model id in
+`/v1/models` is the slugified `name`. Duplicate-name `POST` is rejected (no
+duplicate created). `PUT /api/combos/<UUID>` updates in place; `PUT /api/combos/
+<name>` 404s (keyed by UUID). `GET /api/combos` returns `{"combos":[{id,name,
+models,…}]}`. `DELETE /api/combos/<UUID>` works. No auth on a default local
+gateway; 401 only if `OMNIROUTE_API_KEY` is set. The correct idempotent pattern
+is **upsert by name**: `GET /api/combos` → find by `name` → `PUT /api/combos/
+<UUID>` or `POST`. This is implemented in `helpers/omniroute_client.py:
+create_combo` (+ `_find_combo_by_name`).
+
+**Files.** `plugin.yaml` (2.6.5 → 2.6.6 + description), `hooks.py` + `execute.py`
+(EXPECTED_VERSION → 2.6.6), `helpers/omniroute_client.py` (`create_combo`
+rewritten + `_find_combo_by_name`), `helpers/utility_combo.py` (`COMBO_ID`
+rename + `^auto/` exclusion), `api/combos.py` (rename + 401 docstring), 
+`webui/config.html` (inline dashboard + enlarged gateway button + CSS),
+`webui/omniroute-store.js` (dashboard state + `loadDashboard` +
+`createUtilityCombo` + getters + `gatewayWebUrl` fix + auto-refresh),
+`webui/dashboard.js` (mirror `gatewayWebUrl` fix + rename + auto-combo in
+`init`), `webui/dashboard.html` (rename), `README.md` + `AGENTS.md` (rename +
+contract corrections + this section), `tests/smoke.py` (combo tests updated
+for the upsert-by-name flow + rename).

@@ -286,11 +286,18 @@ class OmniRouteClient:
 
     # --------------------------------------------------------------- combos
     #
-    # v2.6.4 — create / list gateway-side "combos" (the auto/* routes). The
+    # v2.6.6 — create / list gateway-side "combos" (the auto/* routes). The
     # combos API lives at {gateway_root}/api/combos, NOT under /v1, so these
     # methods derive the root from base_url via ``gateway_root()`` (strip the
     # trailing /v1). Used by ``api/combos.py`` to provision the
-    # ``auto/utility:free`` route from the user's live free models.
+    # ``auto/utility-free`` route from the user's live free models.
+    #
+    # Gateway combo-API contract (verified 2026-08-10 against a live gateway):
+    #   - target field is ``models`` (NOT ``targets``); each entry ``{"model": id}``
+    #   - the gateway assigns its own UUID ``id``; our ``id``/``slug`` are ignored
+    #   - the combo's model id in /v1/models is the slugified ``name`` (slash
+    #     preserved, colons BANNED -> 400). So combo_id must be colon-free and
+    #     IS the name. See ``create_combo`` for the upsert-by-name pattern.
 
     def _raw_request(
         self, method: str, url: str, body: Optional[dict] = None
@@ -350,45 +357,99 @@ class OmniRouteClient:
         targets: List[str],
         config: Optional[dict] = None,
     ) -> Dict[str, Any]:
-        """Create (or update) a gateway combo.
+        """Create or refresh a gateway combo (upsert by name).
 
-        POSTs ``{root}/api/combos`` with ``{id, name, strategy, targets:[{model}]}``.
-        On a conflict (the combo already exists — 409, or a 4xx body mentioning
-        "exist"/"duplicate"), retries as ``PUT {root}/api/combos/<urlencoded id>``
-        so the call is idempotent: clicking "Create / refresh" in the dashboard
-        updates the existing combo in place.
+        The OmniRoute gateway's combo API has three constraints the original
+        v2.6.4 code got wrong (all discovered empirically against a live
+        gateway, 2026-08-10):
+
+        1. **The target field is ``models``, not ``targets`.** Sending
+           ``targets`` silently creates a combo with an empty model list, so
+           the combo never routes. The gateway enriches each
+           ``{"model": "<id>"}`` entry with its own ``id``/``kind``/
+           ``providerId``/``weight``.
+        2. **The gateway assigns its own UUID ``id`` and ignores any ``id``/
+           ``slug`` we send.** The combo's model id in ``/v1/models`` is the
+           *slugified* ``name`` (slashes preserved, colons banned). So the
+           selectable LiteLLM id is ``omniroute/<name>`` — the ``combo_id``
+           passed here IS the name and must be colon-free (e.g.
+           ``auto/utility-free``, NOT ``auto/utility:free``; the colon gets a
+           400 "Name can only contain letters, numbers, spaces, -, _, /, .,
+           [ and ]").
+        3. **No authentication is required** to create/list/delete combos on a
+           local gateway (the v2.6.4 "401 without api_key" note was stale for
+           this gateway build).
+
+        Because the gateway keys combos by its own UUID (not by our name), the
+        old POST-then-PUT-by-name retry could never update an existing combo —
+        ``PUT /api/combos/<name>`` 404s. The correct idempotent pattern is
+        **upsert by name**: ``GET /api/combos`` → find the combo whose
+        ``name`` matches → ``PUT /api/combos/<UUID>`` to refresh its targets
+        in place; if none exists, ``POST /api/combos`` to create it. A
+        duplicate-name POST is rejected by the gateway (no duplicate created),
+        so we re-lookup once on POST failure and fall back to PUT in case a
+        concurrent create raced us.
 
         Returns ``{"ok", "status", "body", "method": "POST"|"PUT", "error"}``.
         """
         root = gateway_root(self.base_url)
         body: Dict[str, Any] = {
-            "id": combo_id,
             "name": combo_id,
             "strategy": strategy,
-            "targets": [{"model": t} for t in targets],
+            "models": [{"model": t} for t in targets],
         }
         if config:
             body["config"] = config
+
+        existing_uuid = self._find_combo_by_name(combo_id)
+        if existing_uuid:
+            put_url = f"{root}/api/combos/{urlquote(existing_uuid, safe='')}"
+            r = self._raw_request("PUT", put_url, body)
+            return {**r, "method": "PUT"}
+
         r = self._raw_request("POST", f"{root}/api/combos", body)
         if r["ok"]:
             return {**r, "method": "POST"}
-        body_txt = str(r.get("body") or "").lower()
-        if (
-            r["status"] in (409, 400)
-            or "exist" in body_txt
-            or "duplicate" in body_txt
-        ):
-            put_url = f"{root}/api/combos/{urlquote(combo_id, safe='')}"
+        # A duplicate-name POST is rejected (no duplicate created). Re-lookup
+        # in case the combo appeared between our GET and POST (a concurrent
+        # refresh, or a stale local cache), and fall back to PUT-by-UUID.
+        late_uuid = self._find_combo_by_name(combo_id)
+        if late_uuid:
+            put_url = f"{root}/api/combos/{urlquote(late_uuid, safe='')}"
             r2 = self._raw_request("PUT", put_url, body)
             return {**r2, "method": "PUT"}
         return {**r, "method": "POST"}
 
+    def _find_combo_by_name(self, name: str) -> Optional[str]:
+        """Return the UUID id of the gateway combo with the given name, or None.
+
+        The gateway keys combos by its own UUID; we match on ``name`` (which
+        is also the slug the combo is listed under in ``/v1/models``). Used by
+        ``create_combo``'s upsert path. Tolerates any non-2xx / non-JSON
+        response (returns None) so a flaky ``GET /api/combos`` just falls
+        through to a fresh POST.
+        """
+        r = self.list_combos()
+        if not r.get("ok"):
+            return None
+        body = r.get("body") or {}
+        combos = body.get("combos") if isinstance(body, dict) else None
+        if not isinstance(combos, list):
+            return None
+        for c in combos:
+            if isinstance(c, dict) and c.get("name") == name:
+                cid = c.get("id")
+                if isinstance(cid, str) and cid.strip():
+                    return cid.strip()
+        return None
+
     def list_combos(self) -> Dict[str, Any]:
         """Best-effort ``GET {root}/api/combos``.
 
-        Used by the UI to check whether ``auto/utility:free`` already exists
-        and how many targets it has. Tolerates any non-2xx / non-JSON response
-        (returns ``{"ok": False, ...}``) — the gateway is the source of truth.
+        Used by ``create_combo``'s upsert-by-name path and by the UI to check
+        whether ``auto/utility-free`` already exists and how many targets it
+        has. Tolerates any non-2xx / non-JSON response (returns
+        ``{"ok": False, ...}``) — the gateway is the source of truth.
         """
         root = gateway_root(self.base_url)
         return self._raw_request("GET", f"{root}/api/combos")

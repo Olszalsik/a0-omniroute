@@ -1,5 +1,5 @@
 """
-Curate the target list for the ``auto/utility:free`` OmniRoute combo.
+Curate the target list for the ``auto/utility-free`` OmniRoute combo.
 
 Agent Zero's **utility model** is the "small, fast, cheap" slot. It runs on
 (nearly) every turn and does the background work: history/topic
@@ -33,12 +33,16 @@ from __future__ import annotations
 import re
 from typing import List, Tuple
 
-# The combo id. Matches the gateway's existing ``auto/coding:free`` /
-# ``auto/reasoning:free`` convention (category ``:`` tier). In Agent Zero's
-# model picker it appears as ``omniroute/auto/utility:free``. The plugin's
-# tier classifier already badges ``auto/.*:free`` as "free" (see
-# ``omniroute_client._TIER_FREE_PATTERNS``), so no tier-code change is needed.
-COMBO_ID = "auto/utility:free"
+# The combo id. The OmniRoute gateway bans colons in combo *names* and derives
+# the combo's model id in /v1/models from the slugified name (slashes
+# preserved), so the id is also the name and must be colon-free. This mirrors
+# the gateway's built-in ``auto/coding:free`` / ``auto/reasoning:free``
+# category:tier convention with ``-`` standing in for the banned ``:``. In
+# Agent Zero's model picker it appears as ``omniroute/auto/utility-free``.
+# The plugin's tier classifier already badges ids ending in ``-free`` as
+# "free" (see ``omniroute_client._TIER_FREE_PATTERNS`` — the ``-free`` pattern
+# matches ``auto/utility-free``), so no tier-code change is needed.
+COMBO_ID = "auto/utility-free"
 UTILITY_COMBO_STRATEGY = "priority"
 MAX_TARGETS = 12
 # Tail slots reserved for strong-but-slow reasoners (tier 3) so the "best"
@@ -83,6 +87,15 @@ _EXCLUDE_PATTERNS: Tuple[re.Pattern, ...] = tuple(
         r"g4f", r"dgrid/",
         # --- deprecated ---
         r"galadriel", r"predibase",
+        # --- gateway meta-routes (auto/* combos). A combo must never target
+        # another combo (recursive routing) — and once creation works, our own
+        # auto/utility-free plus the built-in auto/coding:free / auto/best-free
+        # etc. all show up in /v1/models and are classified "free" (they end in
+        # -free or :free), so without this guard they'd be curated into the
+        # utility target list and the combo would route to itself. The auto/
+        # prefix is reserved for the gateway's meta-combos; real provider ids
+        # are namespaced as groq/, google/, openrouter/, etc. ---
+        r"^auto/",
     )
 )
 
@@ -152,7 +165,7 @@ def _order_tier(model_id: str) -> int:
 
 
 def curate_utility_targets(free_model_ids: List[str]) -> List[str]:
-    """Curate an ordered target list for the ``auto/utility:free`` combo.
+    """Curate an ordered target list for the ``auto/utility-free`` combo.
 
     Args:
         free_model_ids: bare gateway model ids (no ``omniroute/`` prefix)

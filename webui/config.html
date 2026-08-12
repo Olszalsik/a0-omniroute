@@ -104,6 +104,83 @@
     .omni-tier-tag.tier-cheap { background: rgba(59, 130, 246, 0.18); color: #3b82f6; }
     .omni-tier-tag.tier-key   { background: rgba(234, 179, 8, 0.18);  color: #eab308; }
     .omni-tier-tag.tier-sub   { background: rgba(168, 85, 247, 0.18); color: #a855f7; }
+
+    /* v2.6.6: enlarged, always-enabled "Open gateway" button. Was a small
+       greyed-out :disabled button that never worked (the store getter read the
+       wrong status field). Now gatewayWebUrl() always resolves (falls back to
+       <browser-host>:8080), so the button is never disabled. */
+    .omni-gateway-btn {
+      padding: 0.55em 1.4em !important;
+      font-size: 1em !important;
+      font-weight: 600;
+      border: 1px solid rgba(180, 130, 60, 0.55) !important;
+      border-radius: 8px !important;
+      background: linear-gradient(180deg, rgba(180, 130, 60, 0.30) 0%, rgba(140, 90, 30, 0.38) 100%) !important;
+      color: #e8c89a !important;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+      transition: filter 0.12s ease, transform 0.06s ease;
+    }
+    .omni-gateway-btn:hover  { filter: brightness(1.12); }
+    .omni-gateway-btn:active { transform: translateY(1px); }
+
+    /* inline dashboard quick-stats + tier breakdown bar */
+    .omni-stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(9em, 1fr));
+      gap: 0.6em;
+    }
+    .omni-stat-card {
+      background: rgba(127,127,127,0.08);
+      border: 1px solid rgba(127,127,127,0.15);
+      border-radius: 8px;
+      padding: 0.6em 0.8em;
+    }
+    .omni-stat-num { font-size: 1.5em; font-weight: 700; line-height: 1.1; }
+    .omni-stat-sub { font-size: 0.78em; opacity: 0.8; margin-top: 0.15em; }
+    .omni-tier-bar {
+      display: flex;
+      width: 100%;
+      height: 1.4em;
+      border-radius: 6px;
+      overflow: hidden;
+      background: rgba(127,127,127,0.12);
+      font-size: 0.78em;
+      font-weight: 600;
+      color: #fff;
+    }
+    .omni-tier-bar > div {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      transition: width 0.25s ease;
+    }
+    .omni-tier-bar .tier-free  { background: #22c55e; }
+    .omni-tier-bar .tier-cheap { background: #3b82f6; }
+    .omni-tier-bar .tier-key   { background: #eab308; color: #1a1a1a; }
+    .omni-tier-bar .tier-sub   { background: #a855f7; }
+    .omni-tier-legend {
+      display: flex;
+      gap: 1em;
+      flex-wrap: wrap;
+      margin-top: 0.35em;
+      font-size: 0.78em;
+      opacity: 0.85;
+    }
+    .omni-tier-legend .swatch {
+      display: inline-block;
+      width: 0.8em; height: 0.8em;
+      border-radius: 3px;
+      margin-right: 0.3em;
+      vertical-align: middle;
+    }
+    .omni-tier-legend .swatch.free  { background: #22c55e; }
+    .omni-tier-legend .swatch.cheap { background: #3b82f6; }
+    .omni-tier-legend .swatch.key   { background: #eab308; }
+    .omni-tier-legend .swatch.sub   { background: #a855f7; }
   </style>
 </head>
 <body>
@@ -116,8 +193,8 @@
       >
 
         <!-- ================== STATUS HEADER ================== -->
-        <div style="display:flex; align-items:center; gap:0.8em; margin-bottom: 1em;">
-          <h3 style="margin:0; flex:1;">OmniRoute Gateway</h3>
+        <div style="display:flex; align-items:center; gap:0.8em; margin-bottom: 1em; flex-wrap:wrap;">
+          <h3 style="margin:0; flex:1; min-width:8em;">OmniRoute Gateway</h3>
           <span
             class="omni-status-pill"
             :class="$store.omnirouteStore.installState === 'ready' ? 'ok' :
@@ -130,23 +207,91 @@
             <span x-show="!$store.omnirouteStore.busy">Re-detect</span>
             <span x-show="$store.omnirouteStore.busy">Checking...</span>
           </button>
-          <!-- v2.6.5: relocated the removed bottom pill's "open the dashboard"
-               action onto the plugin page. Opens the plugin's internal model
-               browser (live models, tier breakdown, the auto/utility:free
-               creator) as a stacked in-SPA modal. openModal is the framework
-               global the bottom pill used to use. -->
-          <button @click="(typeof openModal === 'function') &amp;&amp; openModal('/plugins/omniroute/webui/dashboard.html')"
-                  title="Open the OmniRoute model browser — your live models, tier breakdown, and the auto/utility:free route creator">
-            Open dashboard
-          </button>
-          <!-- v2.6.5: the NEW gateway-UI link the bottom pill never had. Opens
-               the OmniRoute gateway's own web UI (providers, combos, API
-               keys, logs) at http://&lt;host&gt;:8080 in a new tab. -->
-          <button @click="$store.omnirouteStore.openGateway()"
-                  :disabled="!$store.omnirouteStore.gatewayWebUrl"
-                  :title="$store.omnirouteStore.gatewayWebUrl ? `Open the OmniRoute gateway's own web UI at ${$store.omnirouteStore.gatewayWebUrl} (providers, combos, API keys, logs). Opens in a new tab.` : 'Gateway URL not configured — set the OmniRoute base URL in Advanced settings.'">
+          <!-- v2.6.6: the gateway's OWN web UI (providers, combos, API keys,
+               logs) at http://<host>:8080, in a new tab. Enlarged + always
+               enabled: gatewayWebUrl() now falls back to <browser-host>:8080
+               when no base_url is configured, so this is never grey. The old
+               separate dashboard button is gone — the dashboard content is now
+               inlined directly below (no extra click), per the user's request. -->
+          <button class="omni-gateway-btn"
+                  @click="$store.omnirouteStore.openGateway()"
+                  :title="`Open the OmniRoute gateway's own web UI at ${$store.omnirouteStore.gatewayWebUrl} (providers, combos, API keys, logs). Opens in a new tab.`">
             Open gateway ↗
           </button>
+        </div>
+
+        <!-- ================== INLINE DASHBOARD (v2.6.6) ==================
+             The dashboard's live state is shown directly on the settings page
+             (quick stats, tier breakdown, the auto/utility-free creator) so the
+             user no longer has to open a separate dashboard modal. All data
+             comes from $store.omnirouteStore, which loadDashboard() and
+             createUtilityCombo() populate on init. The standalone
+             dashboard.html modal still exists for the chat-input button. -->
+        <div class="omni-section" x-show="$store.omnirouteStore.dashReachable || $store.omnirouteStore.dashBusy">
+          <div style="display:flex; align-items:center; gap:0.6em; margin-bottom:0.6em;">
+            <h4 style="margin:0; flex:1;">Dashboard</h4>
+            <span x-show="$store.omnirouteStore.dashBusy" style="font-size:0.85em; opacity:0.7;">Loading…</span>
+            <button @click="$store.omnirouteStore.loadDashboard()" :disabled="$store.omnirouteStore.dashBusy"
+                    style="padding:2px 10px; font-size:0.85em;">
+              <span x-show="!$store.omnirouteStore.dashBusy">Refresh</span>
+              <span x-show="$store.omnirouteStore.dashBusy">Loading…</span>
+            </button>
+          </div>
+
+          <!-- Quick stats -->
+          <div class="omni-stat-grid">
+            <div class="omni-stat-card">
+              <div class="omni-stat-num" x-text="$store.omnirouteStore.dashModelCount"></div>
+              <div class="omni-stat-sub" x-text="`${$store.omnirouteStore.dashFreeCount} free / ${$store.omnirouteStore.dashCheapCount} cheap / ${$store.omnirouteStore.dashKeyCount} key / ${$store.omnirouteStore.dashSubCount} sub`"></div>
+            </div>
+            <div class="omni-stat-card">
+              <div class="omni-stat-num" x-text="$store.omnirouteStore.dashLatency ? `${$store.omnirouteStore.dashLatency}ms` : '—'"></div>
+              <div class="omni-stat-sub" x-text="$store.omnirouteStore.dashBaseUrl"></div>
+            </div>
+          </div>
+
+          <!-- Tier breakdown bar -->
+          <div x-show="$store.omnirouteStore.dashModelCount > 0" style="margin-top:0.6em;">
+            <div class="omni-tier-bar">
+              <div class="tier-free"  :style="`width:${$store.omnirouteStore.pctFree}%`"  x-text="$store.omnirouteStore.dashFreeCount  ? $store.omnirouteStore.dashFreeCount  : ''"></div>
+              <div class="tier-cheap" :style="`width:${$store.omnirouteStore.pctCheap}%`" x-text="$store.omnirouteStore.dashCheapCount ? $store.omnirouteStore.dashCheapCount : ''"></div>
+              <div class="tier-key"   :style="`width:${$store.omnirouteStore.pctKey}%`"   x-text="$store.omnirouteStore.dashKeyCount   ? $store.omnirouteStore.dashKeyCount   : ''"></div>
+              <div class="tier-sub"   :style="`width:${$store.omnirouteStore.pctSub}%`"   x-text="$store.omnirouteStore.dashSubCount   ? $store.omnirouteStore.dashSubCount   : ''"></div>
+            </div>
+            <div class="omni-tier-legend">
+              <span><i class="swatch free"></i> Free</span>
+              <span><i class="swatch cheap"></i> Cheap</span>
+              <span><i class="swatch key"></i> Key</span>
+              <span><i class="swatch sub"></i> Subscription</span>
+            </div>
+          </div>
+
+          <!-- Utility route (auto/utility-free) creator -->
+          <div style="margin-top:0.8em; padding-top:0.7em; border-top:1px solid rgba(127,127,127,0.15);">
+            <h4 style="margin:0 0 0.3em 0;">Utility route <code style="font-size:0.85em;">auto/utility-free</code></h4>
+            <p style="margin:0 0 0.5em 0; font-size:0.85em; opacity:0.85;">
+              A free, priority-ordered route curated from <em>your live free models</em>
+              (fast + JSON-capable + ≥32k context; image/audio/embedding/toy dropped), tuned for
+              the utility slot. Selectable in the model picker as
+              <code>omniroute/auto/utility-free</code>. Refresh re-curates from the latest free
+              models, so newly-enabled providers are picked up automatically.
+            </p>
+            <div style="display:flex; gap:0.6em; align-items:center; flex-wrap:wrap;">
+              <button @click="$store.omnirouteStore.createUtilityCombo()" :disabled="$store.omnirouteStore.utilityComboBusy"
+                      style="padding:0.45em 1em; border:1px solid var(--omni-amber, #d4a574); border-radius:6px; background:linear-gradient(180deg, rgba(180,130,60,0.25) 0%, rgba(140,90,30,0.3) 100%); color:#d4a574; cursor:pointer; font-size:0.9em;">
+                <span x-show="!$store.omnirouteStore.utilityComboBusy">Create / refresh auto/utility-free</span>
+                <span x-show="$store.omnirouteStore.utilityComboBusy">Creating…</span>
+              </button>
+              <span style="font-size:0.82em; opacity:0.8;" x-show="$store.omnirouteStore.utilityComboResult && $store.omnirouteStore.utilityComboResult.ok"
+                    x-text="`${$store.omnirouteStore.utilityComboResult.count} targets · ${$store.omnirouteStore.utilityComboResult.freeCount} free models seen`"></span>
+            </div>
+            <div x-show="$store.omnirouteStore.utilityComboResult && $store.omnirouteStore.utilityComboResult.ok"
+                 style="margin-top:0.5em; font-size:0.85em; color:#22c55e;">
+              ✓ Ready — pick <code>omniroute/auto/utility-free</code> for the <strong>Utility Model</strong> slot (Settings → Model Presets).
+            </div>
+            <div x-show="$store.omnirouteStore.utilityComboResult && !$store.omnirouteStore.utilityComboResult.ok"
+                 style="margin-top:0.5em; font-size:0.85em; color:#ef4444;" x-text="$store.omnirouteStore.utilityComboResult && $store.omnirouteStore.utilityComboResult.error"></div>
+          </div>
         </div>
 
         <!-- ================== READY STATE ================== -->

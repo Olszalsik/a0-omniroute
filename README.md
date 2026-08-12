@@ -158,7 +158,7 @@ showing `webui/dashboard.html`:
 - A **Settings** button that opens the plugin's config page.
 - A **Open gateway ↗** button that opens the gateway's own web UI
   (see §6).
-- The **Utility route** section with the `auto/utility:free` creator
+- The **Utility route** section with the `auto/utility-free` creator
   (see §7).
 
 ### 5. The settings page
@@ -167,9 +167,15 @@ showing `webui/dashboard.html`:
 on some builds) opens `webui/config.html`. From there you can:
 
 - See the current install state and re-detect.
-- **Open dashboard** — open the plugin's model browser (§4).
-- **Open gateway ↗** — open the OmniRoute gateway's own web UI in a
-  new tab (§6).
+- An **inline dashboard** (v2.6.6) — the live model counts, a tier
+  breakdown bar, and the `auto/utility-free` creator are shown directly
+  on the settings page, so you no longer have to click "Open dashboard"
+  to see them. (The standalone dashboard modal in §4 still exists for
+  the chat-input button.)
+- **Open gateway ↗** — a large, always-enabled button that opens the
+  OmniRoute gateway's own web UI in a new tab (§6). It is never greyed
+  out: the URL falls back to `http://<your-host>:8080` when no
+  `base_url` is configured yet.
 - Send a one-shot test completion to verify the round-trip.
 - Load the full model list (with tier tags).
 - Remove the gateway (see [Lifecycle](#lifecycle-install-disable-uninstall-remove-gateway)).
@@ -191,11 +197,14 @@ the `/v1` API suffix and rewrites the container-side hostname
 *browser* can't resolve) to the host you're browsing Agent Zero from,
 keeping the port. So if Agent Zero is at `http://myhost:8080` for you,
 the gateway UI opens at `http://myhost:8080`. If `base_url` is unset or
-unparseable the button is disabled (never opens a blank tab). This is
-where you grab the **control token** you paste into the plugin's API-key
-field to create combos (see §7's "API key required to create" note).
+unparseable the button falls back to `http://<your-browser-host>:8080`
+rather than disabling — the gateway is published on the same host you're
+browsing from, so the button is always usable (v2.6.6; it was previously
+greyed out because the store read the wrong status field). This is
+where you grab the **control token** if your gateway has been configured
+to require one for combo creation (see §7's note).
 
-### 7. The utility route — `auto/utility:free`
+### 7. The utility route — `auto/utility-free`
 
 Agent Zero's **utility model** is the small/fast slot that runs on
 nearly every turn — history/topic summarization, chat renaming, memory
@@ -209,9 +218,9 @@ more often than the main chat model, so it's the best place to use a
 fan out across models with one id: the gateway already ships
 `auto/best`, `auto/cheap`, `auto/coding:free`, and `auto/reasoning:free`.
 This plugin adds one more, tuned for the utility slot:
-`auto/utility:free`.
+`auto/utility-free`.
 
-**What it picks.** `auto/utility:free` is a **free-only, priority-ordered**
+**What it picks.** `auto/utility-free` is a **free-only, priority-ordered**
 route curated from *your live free models*. It keeps models that are
 **fast + can follow JSON-as-text + have a usable context window**, and
 drops the rest:
@@ -224,25 +233,29 @@ drops the rest:
 - ✓ **The best models kept as last-resort fallbacks** (DeepSeek-R1, o1/o3, …) —
   ordered *last*, never excluded, so a strong model always catches the tail.
 
-**Create it.** Open the **dashboard** → scroll to the **Utility route
-`auto/utility:free`** section → click **Create / refresh `auto/utility:free`**.
-The plugin reads your live free models, curates the list, and creates the
-combo in the gateway. It's **idempotent** — clicking it again updates the
-existing combo in place (so it always reflects your current providers).
+**Create it.** Open the plugin's **settings page** (*Settings → External →
+OmniRoute*) — the **Utility route `auto/utility-free`** creator is shown
+inline (v2.6.6), and it **auto-runs once on page load** when the gateway is
+up, so the combo is usually already there before you click anything. Click
+**Create / refresh `auto/utility-free`** to re-curate from your latest free
+models. The plugin reads your live free models, curates the list, and
+creates the combo in the gateway. It's **idempotent** — clicking it again
+updates the existing combo in place (so it always reflects your current
+providers). The same creator is also on the standalone dashboard (§4).
 
-> **API key required to create (not to use).** Listing and *using* free models
-> needs no key, but **creating a combo is an authenticated gateway-admin
-> action** — the gateway's `POST /api/combos` returns `401 Authentication
-> required` without one. So set the **OmniRoute API key** first (*Settings →
-> External → OmniRoute → API key* — the gateway's control token, shown in the
-> OmniRoute gateway UI at the host URL), save, then click Create / refresh. If
-> you click it with no key, the button shows a red error telling you exactly
-> that. No-key alternative: skip creation entirely and pick an existing free
-> combo the gateway already ships — `omniroute/auto/best-free` or
-> `omniroute/auto/coding:free` — for the Utility slot.
+> **No API key needed to create (default gateway).** Listing free models
+> *and* creating combos are both **unauthenticated** on a default local
+> OmniRoute gateway — no key is required. A `401 Authentication required`
+> only appears if the gateway has been configured to require an admin token
+> for its management endpoints (`OMNIROUTE_API_KEY` set on the gateway); in
+> that case add the **OmniRoute API key** (*Settings → External → OmniRoute
+> → API key* — the gateway's control token, shown in the OmniRoute gateway
+> UI at the host URL), save, then click Create / refresh. (The old v2.6.4
+> note said creation always 401'd without a key — that was a misdiagnosis;
+> the real failure was a colon in the combo name, now fixed.)
 
 **Use it.** In *Settings → Model Presets*, pick
-**`omniroute/auto/utility:free`** for the **Utility Model** slot. The
+**`omniroute/auto/utility-free`** for the **Utility Model** slot. The
 plugin never writes your preset — you pick it yourself.
 
 You can also create or edit the combo manually in the gateway's own

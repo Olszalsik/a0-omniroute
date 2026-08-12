@@ -1294,11 +1294,11 @@ def test_required_files_exist():
         "api/test.py",
         "api/dashboard.py",
         "api/usage.py",
-        "api/combos.py",  # v2.6.4: provisions auto/utility:free in the gateway
+        "api/combos.py",  # v2.6.4: provisions auto/utility-free in the gateway
         "helpers/omniroute_client.py",
         "helpers/last_known.py",
         "helpers/cache.py",
-        "helpers/utility_combo.py",  # v2.6.4: curates the auto/utility:free target list
+        "helpers/utility_combo.py",  # v2.6.4: curates the auto/utility-free target list
         "webui/config.html",
         "webui/omniroute-store.js",
         "webui/dashboard.html",
@@ -2215,7 +2215,7 @@ def test_bottom_button_is_noop_after_v265():
     plugin's INTERNAL dashboard modal — NOT the gateway's own web UI at
     localhost:8080 that users actually wanted. The status + open-dashboard
     actions were relocated onto the plugin pages (see
-    test_config_html_has_open_gateway_button / _open_dashboard_button).
+    test_config_html_has_open_gateway_button / test_config_html_inlines_dashboard).
 
     The extension file is kept as a no-op so the chat-input-bottom-actions-end
     slot stays registered (prevents stale extension-point errors on
@@ -2276,26 +2276,44 @@ def test_config_html_has_open_gateway_button():
     )
     assert "gatewayWebUrl" in src, (
         "config.html should reference $store.omnirouteStore.gatewayWebUrl "
-        "(the browser-reachable gateway URL) for the button tooltip / "
-        "disabled state."
+        "(the browser-reachable gateway URL) for the button tooltip. v2.6.6: "
+        "the button is never disabled — gatewayWebUrl always resolves."
     )
 
 
-def test_config_html_has_open_dashboard_button():
-    """v2.6.5: the Settings page must wire an 'Open dashboard' button to
-    openModal('/plugins/omniroute/webui/dashboard.html') — this relocates
-    the removed bottom pill's 'open the plugin dashboard' action onto the
-    plugin page so the model browser + auto/utility:free creator stay
-    reachable after the pill is gone.
-    """
+def test_config_html_inlines_dashboard():
+    """v2.6.6: the Settings page shows the dashboard INLINE (no separate
+    'Open dashboard' button). config.html must bind to the
+    $store.omnirouteStore dashboard getters + the createUtilityCombo()
+    creator, and must NOT contain the old 'Open dashboard' button label
+    (the dashboard content is now on the page itself). The standalone
+    dashboard.html modal is still tested separately below."""
     src = open(os.path.join(PLUGIN_ROOT, "webui", "config.html"), encoding="utf-8").read()
-    assert "openModal('/plugins/omniroute/webui/dashboard.html')" in src or \
-           'openModal("/plugins/omniroute/webui/dashboard.html")' in src, (
-        "config.html must call openModal('/plugins/omniroute/webui/"
-        "dashboard.html') to open the plugin's model browser."
+    # Inline dashboard bound to the store's dashboard getters.
+    assert "dashModelCount" in src, (
+        "config.html must render the inline dashboard via $store.omnirouteStore"
+        ".dashModelCount (v2.6.6 inline dashboard)."
     )
-    assert "Open dashboard" in src, (
-        "config.html must contain an 'Open dashboard' button label."
+    assert "createUtilityCombo" in src, (
+        "config.html must wire the auto/utility-free creator to "
+        "$store.omnirouteStore.createUtilityCombo()."
+    )
+    # The old 'Open dashboard' button is gone (dashboard is inline now): no
+    # openModal trigger for the standalone dashboard.html remains on the
+    # settings page, and no 'Open dashboard' button label.
+    assert "openModal('/plugins/omniroute/webui/dashboard.html')" not in src and \
+           'openModal("/plugins/omniroute/webui/dashboard.html")' not in src, (
+        "config.html must NOT open the dashboard modal in v2.6.6 — the "
+        "dashboard content is inlined on the page."
+    )
+    assert "Open dashboard" not in src, (
+        "config.html must NOT contain an 'Open dashboard' button label in "
+        "v2.6.6 — the dashboard is inlined on the page."
+    )
+    # The enlarged 'Open gateway' button is still present.
+    assert "Open gateway" in src, (
+        "config.html must still contain the 'Open gateway' button (v2.6.6 "
+        "enlarged, always-enabled)."
     )
 
 
@@ -2357,7 +2375,8 @@ def test_gateway_web_url_helper_transforms():
         browser's window.location.hostname (the browser can't resolve the
         container-side names)
       - keep the port from base_url
-      - return null for missing/unparseable input
+      - v2.6.6: fall back to http://<browser-host>:8080 for missing/unparseable
+        input (NEVER null) so the 'Open gateway' button is never disabled.
     We load the store module as a classic script (stripping ESM syntax,
     same pattern as the dashboard debounce tests) with createStore stubbed,
     then exercise the exported gatewayWebUrl directly.
@@ -2418,11 +2437,11 @@ def test_gateway_web_url_helper_transforms():
     assert r["alreadyRoot"] == "http://myhost:8080", r["alreadyRoot"]
     # Scheme + port preserved.
     assert r["https"] == "https://myhost:8443", r["https"]
-    # Missing/unparseable -> null (caller shows a "not configured" toast,
-    # never opens a blank tab).
-    assert r["empty"] is None, r["empty"]
-    assert r["none"] is None, r["none"]
-    assert r["garbage"] is None, r["garbage"]
+    # v2.6.6: missing/unparseable -> http://<browser-host>:8080 (NEVER null),
+    # so the 'Open gateway' button is never disabled/greyed out.
+    assert r["empty"] == "http://myhost:8080", r["empty"]
+    assert r["none"] == "http://myhost:8080", r["none"]
+    assert r["garbage"] == "http://myhost:8080", r["garbage"]
 
 
 # ===========================================================================
@@ -2473,10 +2492,11 @@ def test_install_preflight_does_not_raise_when_gateway_down():
 # ===========================================================================
 # 20. helpers/utility_combo.py + api/combos.py + combos client (v2.6.4)
 #
-# The `auto/utility:free` route is curated by the pure helper
+# The `auto/utility-free` route is curated by the pure helper
 # `helpers/utility_combo.py:curate_utility_targets` and provisioned in the
-# gateway by `OmniRouteClient.create_combo` (POST /api/combos, retry as PUT on
-# conflict), glued together by `api/combos.py`. These tests cover the
+# gateway by `OmniRouteClient.create_combo` (v2.6.6 upsert-by-name: GET
+# /api/combos -> find by name -> PUT /api/combos/<UUID> or POST), glued
+# together by `api/combos.py`. These tests cover the
 # curator's exclusion/ordering/cap/reservation rules, the pure `gateway_root`
 # helper, `create_combo`'s idempotent POST→PUT retry, and the endpoint's full
 # curate-from-live-free-models flow (via the path-aware StubServer).
@@ -2603,54 +2623,96 @@ def test_gateway_root_strips_trailing_v1(helpers_omniroute):
     assert gr(None) == ""
 
 
-def test_create_combo_retries_put_on_conflict(stub_server, helpers_omniroute):
-    """`create_combo` POSTs {root}/api/combos and, on a 409/400 "already
-    exists" conflict, retries as PUT {root}/api/combos/<urlencoded id> — so
-    "Create / refresh" is idempotent and updates the combo in place."""
+def test_create_combo_upserts_put_by_uuid_when_exists(stub_server, helpers_omniroute):
+    """v2.6.6: `create_combo` is upsert-by-name. It first `GET /api/combos` and
+    looks up the combo by *name*; if found, it `PUT /api/combos/<UUID>` (the
+    gateway keys combos by its own UUID, NOT by our name) to refresh the
+    targets in place. This replaces the v2.6.4 POST-then-PUT-by-name retry,
+    which 404'd because the gateway ignores our id."""
     stub_server.set_routes([
-        # First the POST hits the conflict
-        ("POST", "/api/combos", {"error": "combo already exists"}, 409),
-        # Then the PUT succeeds
-        ("PUT", "/api/combos/", {"ok": True, "id": "auto/utility:free"}, 200),
+        # The lookup: GET /api/combos returns an existing combo with a UUID id.
+        ("GET", "/api/combos", {"combos": [
+            {"id": "uuid-1234", "name": "auto/utility-free"},
+        ]}, 200),
+        # The refresh: PUT /api/combos/<UUID> succeeds.
+        ("PUT", "/api/combos", {"ok": True, "id": "uuid-1234"}, 200),
     ])
     client = helpers_omniroute.OmniRouteClient(
         base_url=f"http://127.0.0.1:{stub_server.port}/v1", timeout=3
     )
-    r = client.create_combo("auto/utility:free", "priority", ["groq/x", "gemini/y"])
-    assert r["ok"] is True, f"PUT retry should succeed: {r!r}"
-    assert r["method"] == "PUT", f"expected method=PUT after conflict, got {r!r}"
+    r = client.create_combo("auto/utility-free", "priority", ["groq/x", "gemini/y"])
+    assert r["ok"] is True, f"PUT refresh should succeed: {r!r}"
+    assert r["method"] == "PUT", f"expected method=PUT when combo exists, got {r!r}"
     assert r["status"] == 200
-    # Verify both requests were made in order: POST then PUT
+    # The body sent on PUT must use the `models` field (NOT `targets`).
+    # (The stub doesn't echo the body, but the contract is asserted in the
+    # endpoint test below; here we assert the request ordering + URL.)
     methods = [m for m, _ in stub_server.request_log]
-    assert "POST" in methods and "PUT" in methods, (
-        f"expected both POST and PUT requests; log={stub_server.request_log}"
+    assert "GET" in methods and "PUT" in methods, (
+        f"expected GET (lookup) then PUT (refresh); log={stub_server.request_log}"
     )
-    assert methods.index("POST") < methods.index("PUT"), (
-        f"POST must precede the PUT retry; log={methods}"
+    assert methods.index("GET") < methods.index("PUT"), (
+        f"GET lookup must precede the PUT refresh; log={methods}"
     )
-    # The PUT URL must contain the urlencoded combo id
+    # No POST should be issued when the combo already exists.
+    assert "POST" not in methods, (
+        f"POST must not be issued when the combo exists; log={methods}"
+    )
+    # The PUT URL must contain the existing combo's UUID (urlencoded).
     put_paths = [p for m, p in stub_server.request_log if m == "PUT"]
-    assert any("auto%2Futility%3Afree" in p for p in put_paths), (
-        f"PUT path must urlencode the combo id (auto/utility:free -> "
-        f"auto%2Futility%3Afree); got {put_paths}"
+    assert any("uuid-1234" in p for p in put_paths), (
+        f"PUT path must target the existing combo's UUID; got {put_paths}"
     )
 
 
-def test_create_combo_post_succeeds_without_retry(stub_server, helpers_omniroute):
-    """When the POST succeeds (2xx), `create_combo` must NOT retry as PUT —
-    method is 'POST' and the body is returned as-is."""
+def test_create_combo_posts_when_not_exists(stub_server, helpers_omniroute):
+    """v2.6.6: when `GET /api/combos` does NOT find a combo with our name,
+    `create_combo` `POST /api/combos` to create it. No PUT is issued."""
     stub_server.set_routes([
-        ("POST", "/api/combos", {"ok": True, "id": "auto/utility:free"}, 201),
+        # The lookup: GET /api/combos returns no matching combo.
+        ("GET", "/api/combos", {"combos": []}, 200),
+        # The create: POST /api/combos succeeds (gateway assigns its own UUID).
+        ("POST", "/api/combos", {"ok": True, "id": "uuid-new"}, 201),
     ])
     client = helpers_omniroute.OmniRouteClient(
         base_url=f"http://127.0.0.1:{stub_server.port}/v1", timeout=3
     )
-    r = client.create_combo("auto/utility:free", "priority", ["groq/x"])
+    r = client.create_combo("auto/utility-free", "priority", ["groq/x"])
     assert r["ok"] is True
     assert r["method"] == "POST"
     assert r["status"] == 201
-    # No PUT should have been issued
-    assert "PUT" not in [m for m, _ in stub_server.request_log]
+    # GET lookup then POST create, in order; no PUT.
+    methods = [m for m, _ in stub_server.request_log]
+    assert methods.index("GET") < methods.index("POST"), (
+        f"GET lookup must precede the POST create; log={methods}"
+    )
+    assert "PUT" not in methods, (
+        f"PUT must not be issued when the combo is new; log={methods}"
+    )
+
+
+def test_create_combo_returns_post_failure_when_no_late_uuid(
+    stub_server, helpers_omniroute
+):
+    """v2.6.6: if `GET /api/combos` finds nothing AND the `POST` fails (e.g. a
+    duplicate-name race the gateway rejects), `create_combo` re-looks-up once
+    and falls back to PUT-by-UUID; if the re-lookup STILL finds nothing, it
+    returns the original POST failure (ok=False, method=POST) rather than
+    masking the error. The stateless stub returns the same empty list on both
+    GETs, so this exercises the terminal 'no late UUID' branch."""
+    stub_server.set_routes([
+        # Both lookups (before POST and after the failed POST) return empty.
+        ("GET", "/api/combos", {"combos": []}, 200),
+        # The POST is rejected (duplicate-name race).
+        ("POST", "/api/combos", {"error": "combo already exists"}, 409),
+    ])
+    client = helpers_omniroute.OmniRouteClient(
+        base_url=f"http://127.0.0.1:{stub_server.port}/v1", timeout=3
+    )
+    r = client.create_combo("auto/utility-free", "priority", ["groq/x"])
+    assert r["ok"] is False, f"expected the POST failure to surface: {r!r}"
+    assert r["method"] == "POST", f"terminal fallback is method=POST; got {r!r}"
+    assert r["status"] == 409
 
 
 class TestCombosEndpoint:
@@ -2680,7 +2742,10 @@ class TestCombosEndpoint:
     ):
         """Full glue: GET /v1/models returns free + non-free + excluded ids;
         the endpoint filters to free, curates (dropping flux), and POSTs the
-        combo. The response must be the documented success envelope."""
+        combo. The response must be the documented success envelope. v2.6.6:
+        `create_combo` first does a GET /api/combos lookup (here empty → no
+        existing combo) then POSTs; the combo id is colon-free
+        `auto/utility-free`."""
         stub_server.set_routes([
             # Live model catalog: one non-free, one excluded image model,
             # two valid free chat models (fast + slow reasoner).
@@ -2690,13 +2755,15 @@ class TestCombosEndpoint:
                 {"id": "groq/llama-4-scout:free"},      # free + valid (fast)
                 {"id": "deepseek/deepseek-r1:free"},    # free + valid (slow)
             ]}, 200),
-            # Gateway accepts the combo
-            ("POST", "/api/combos", {"ok": True, "id": "auto/utility:free"}, 200),
+            # v2.6.6 upsert lookup: no existing combo with our name.
+            ("GET", "/api/combos", {"combos": []}, 200),
+            # Gateway accepts the combo (POST create; gateway assigns the UUID).
+            ("POST", "/api/combos", {"ok": True, "id": "uuid-new"}, 200),
         ])
         result = self._run(api_combos)
         assert result["ok"] is True, f"expected ok, got {result!r}"
-        assert result["combo_id"] == "auto/utility:free"
-        assert result["selectable_as"] == "omniroute/auto/utility:free"
+        assert result["combo_id"] == "auto/utility-free"
+        assert result["selectable_as"] == "omniroute/auto/utility-free"
         assert result["strategy"] == "priority"
         # 3 free models seen (gpt-4o is sub, not counted as free)
         assert result["free_model_count"] == 3
@@ -2726,8 +2793,8 @@ class TestCombosEndpoint:
         try:
             result = self._run(api_combos)
             assert result["ok"] is False
-            assert result["combo_id"] == "auto/utility:free"
-            assert result["selectable_as"] == "omniroute/auto/utility:free"
+            assert result["combo_id"] == "auto/utility-free"
+            assert result["selectable_as"] == "omniroute/auto/utility-free"
             assert result["target_count"] == 0
             assert result["targets"] == []
             assert result["error"] is not None and result["error"].strip()
@@ -2754,18 +2821,22 @@ class TestCombosEndpoint:
     def test_401_returns_set_api_key_message(
         self, stub_server, stub_helpers_plugins, api_combos,
     ):
-        """v2.6.4: the gateway's POST /api/combos is an authenticated admin
-        action — it 401s with no API key, even though GET /v1/models is public.
-        The endpoint must detect the 401 and return a message that tells the
-        user to set the OmniRoute API key (NOT a generic "gateway rejected"
-        string). This is the exact failure a free-tier-first user hits when
-        they click Create / refresh with no key configured."""
+        """v2.6.6: on a default local gateway combo creation is unauthenticated,
+        but a gateway configured with `OMNIROUTE_API_KEY` returns 401 on
+        `POST /api/combos`. The endpoint must detect the 401 and return a
+        message that tells the user to set the OmniRoute API key (NOT a generic
+        "gateway rejected" string). The v2.6.4 docstring claimed creation always
+        401'd without a key — that was a misdiagnosis of a colon-in-name 400;
+        the 401 path itself is still real (when the gateway requires a token) so
+        this test stays, with the upsert GET /api/combos lookup stubbed too."""
         stub_server.set_routes([
             # Free models list fine (public) — gets past curation.
             ("GET", "/v1/models", {"data": [
                 {"id": "groq/llama-4-scout:free"},
             ]}, 200),
-            # Combo create 401s (no key).
+            # v2.6.6 upsert lookup: no existing combo.
+            ("GET", "/api/combos", {"combos": []}, 200),
+            # Combo create 401s (gateway requires an admin token).
             ("POST", "/api/combos", {"error": {"message": "Authentication required"}}, 401),
         ])
         result = self._run(api_combos)
@@ -2799,12 +2870,17 @@ def test_self_check_includes_combos():
 
 
 def test_agents_md_documents_utility_combo(agents_md):
-    """v2.6.4: AGENTS.md must document the auto/utility:free route — the
+    """v2.6.4/v2.6.6: AGENTS.md must document the auto/utility-free route — the
     invariant (#20) and the v2.6.4 section — so a future contributor knows the
     curator is the single source of truth and provisioning never touches a
-    preset."""
+    preset. v2.6.6 renamed the combo (colon banned), so the canonical name is
+    auto/utility-free; the old colon form survives only in the 'NOT
+    auto/utility:free' correction notes."""
     assert "20." in agents_md, "AGENTS.md should document invariant 20 (utility combo)"
-    assert "auto/utility:free" in agents_md
+    assert "auto/utility-free" in agents_md, (
+        "AGENTS.md must reference the canonical colon-free combo name "
+        "auto/utility-free (v2.6.6 rename)."
+    )
     assert "utility_combo.py" in agents_md
     assert "api/combos.py" in agents_md
     assert "curate_utility_targets" in agents_md

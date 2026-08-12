@@ -39,9 +39,19 @@ const DEBOUNCE_MS = 5000;
 // omniroute-store.js on purpose (the dashboard uses its own Alpine scope
 // and does not import the settings store — same reason recoverGateway()/
 // uninstallGateway() are duplicated above). Keep the two copies in sync.
+//
+// v2.6.6: fall back to <browser-host>:8080 when base_url is missing (the
+// gateway is published on the Docker host at the default port 8080 and the
+// browser is already on that host), so the "Open gateway" button is never
+// disabled. Mirrors the same fix in omniroute-store.js.
+const DEFAULT_GATEWAY_PORT = "8080";
 function gatewayWebUrl(base_url) {
   const raw = (base_url || "").trim();
-  if (!raw) return null;
+  if (!raw) {
+    const browserHost =
+      (typeof window !== "undefined" && window.location && window.location.hostname) || "localhost";
+    return `http://${browserHost}:${DEFAULT_GATEWAY_PORT}`;
+  }
   try {
     const u = new URL(raw);
     let host = u.hostname;
@@ -60,7 +70,9 @@ function gatewayWebUrl(base_url) {
     const port = u.port ? ":" + u.port : "";
     return `${u.protocol}//${host}${port}`;
   } catch (e) {
-    return null;
+    const browserHost =
+      (typeof window !== "undefined" && window.location && window.location.hostname) || "localhost";
+    return `http://${browserHost}:${DEFAULT_GATEWAY_PORT}`;
   }
 }
 
@@ -191,7 +203,21 @@ export function omnirouteDashboard() {
       // within ~1s instead of waiting 5s for the debounce. The
       // debounce is for subsequent calls (auto-refresh, manual
       // double-clicks) — the first call should be eager.
-      this.forceRefresh();
+      // v2.6.6: chain on the eager fetch's promise to auto-refresh the
+      // auto/utility-free combo from the latest free models once the first
+      // dashboard fetch confirms the gateway is up (#4: auto-detect new free
+      // models). Idempotent upsert (PUT if the combo already exists), so this
+      // is safe to run on every dashboard open. We only auto-run once per init
+      // (not on every debounced refresh) to avoid repeating the gateway write
+      // on each manual Refresh click. NOTE: call forceRefresh() exactly once
+      // here — a second call would no-op via the `if (this.busy) return` guard
+      // and return undefined, breaking the .then() chain.
+      this.forceRefresh().then(() => {
+        if (this.reachable && !this._autoComboDone) {
+          this._autoComboDone = true;
+          this.createUtilityCombo();
+        }
+      }).catch(() => {});
       // Also sync the status pill with the omnirouteStore, which is the
       // source of truth used by the config page and the topbar OmniRoute
       // button. Without this, the dashboard reads /api/plugins/omniroute/
@@ -238,7 +264,9 @@ export function omnirouteDashboard() {
       if (this.busy) return;
       this._clearPendingTimer();
       this._clearPendingTicker();
-      this._doFetch();
+      // v2.6.6: return the fetch promise so callers (e.g. init()'s
+      // auto-combo-refresh) can chain on completion.
+      return this._doFetch();
     },
 
     // The actual fetch — private. Splits the side effects from the
@@ -361,12 +389,12 @@ export function omnirouteDashboard() {
     },
 
     // ----------------------------------------------------------------------
-    // Create / refresh the `auto/utility:free` combo IN THE GATEWAY via the
+    // Create / refresh the `auto/utility-free` combo IN THE GATEWAY via the
     // plugin backend (POST /api/plugins/omniroute/combos). The backend curates
     // the target list from the user's live free models (fast + JSON-capable +
     // >=32k context; drops image/audio/embedding/toy/flaky/deprecated) and
     // POSTs a priority combo to the gateway's /api/combos. After this
-    // succeeds, `omniroute/auto/utility:free` shows in Agent Zero's model
+    // succeeds, `omniroute/auto/utility-free` shows in Agent Zero's model
     // picker (badged "free") and the user picks it for the Utility slot
     // themselves — this method never touches the preset.
     async createUtilityCombo() {
@@ -384,7 +412,7 @@ export function omnirouteDashboard() {
         if (!r.ok || !d || !d.ok) {
           const msg = (d && (d.error || d.gateway_response)) || ("HTTP " + r.status);
           this.utilityComboResult = { ok: false, error: String(msg) };
-          toastFrontendError("Could not create auto/utility:free: " + msg, "OmniRoute");
+          toastFrontendError("Could not create auto/utility-free: " + msg, "OmniRoute");
           return;
         }
         const targets = Array.isArray(d.targets) ? d.targets : [];
@@ -396,13 +424,13 @@ export function omnirouteDashboard() {
           freeCount: d.free_model_count || 0,
         };
         toastFrontendInfo(
-          `auto/utility:free ready — ${this.utilityComboResult.count} targets. ` +
-          `Pick "omniroute/auto/utility:free" for the Utility slot.`,
+          `auto/utility-free ready — ${this.utilityComboResult.count} targets. ` +
+          `Pick "omniroute/auto/utility-free" for the Utility slot.`,
           "OmniRoute"
         );
       } catch (e) {
         this.utilityComboResult = { ok: false, error: String(e) };
-        toastFrontendError("Could not create auto/utility:free: " + e, "OmniRoute");
+        toastFrontendError("Could not create auto/utility-free: " + e, "OmniRoute");
       } finally {
         this.utilityComboBusy = false;
       }

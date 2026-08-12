@@ -144,25 +144,25 @@
       </div>
     </div>
 
-    <!-- Utility combo (auto/utility:free) -->
+    <!-- Utility combo (auto/utility-free) -->
     <div class="omni-section" x-show="reachable">
-      <h2>Utility route <small>auto/utility:free</small></h2>
+      <h2>Utility route <small>auto/utility-free</small></h2>
       <div class="omni-util-explainer">
         Create a free route tuned for Agent Zero's <strong>utility model</strong> — the small, fast
         slot that runs summaries, memory, and JSON sub-tasks on almost every turn. It's curated
         from <em>your live free models</em>: fast + JSON-capable + a usable context window, with
         image/audio/embedding/toy/flaky models dropped and the best models kept as last-resort
-        fallbacks. Selectable in the model picker as <code>omniroute/auto/utility:free</code>.
+        fallbacks. Selectable in the model picker as <code>omniroute/auto/utility-free</code>.
       </div>
       <div class="omni-util-row">
-        <button @click="createUtilityCombo()" :disabled="utilityComboBusy" :title="utilityComboBusy ? 'Creating…' : 'Create or refresh the auto/utility:free combo in the gateway'">
-          <span x-show="!utilityComboBusy">Create / refresh auto/utility:free</span>
+        <button @click="createUtilityCombo()" :disabled="utilityComboBusy" :title="utilityComboBusy ? 'Creating…' : 'Create or refresh the auto/utility-free combo in the gateway'">
+          <span x-show="!utilityComboBusy">Create / refresh auto/utility-free</span>
           <span x-show="utilityComboBusy">Creating…</span>
         </button>
         <span class="sub" x-show="utilityComboResult && utilityComboResult.ok" x-text="`${utilityComboResult.count} targets · ${utilityComboResult.freeCount} free models seen`"></span>
       </div>
       <div class="omni-util-result ok" x-show="utilityComboResult && utilityComboResult.ok">
-        <div>✓ Created <span x-text="utilityComboResult.method ? `(${utilityComboResult.method})` : ''"></span> — pick <code>omniroute/auto/utility:free</code> for the <strong>Utility Model</strong> slot (Settings → Model Presets).</div>
+        <div>✓ Created <span x-text="utilityComboResult.method ? `(${utilityComboResult.method})` : ''"></span> — pick <code>omniroute/auto/utility-free</code> for the <strong>Utility Model</strong> slot (Settings → Model Presets).</div>
         <div class="samples" x-show="utilityComboResult.sample && utilityComboResult.sample.length" x-text="utilityComboResult.sample.join(', ') + (utilityComboResult.count > utilityComboResult.sample.length ? ', …' : '')"></div>
       </div>
       <div class="omni-util-result bad" x-show="utilityComboResult && !utilityComboResult.ok">
