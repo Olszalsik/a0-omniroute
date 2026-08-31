@@ -38,6 +38,11 @@
     .omni-actions button { padding: 0.45em 0.9em; border-radius: 5px; border: 1px solid var(--omni-border); background: var(--omni-panel); color: var(--omni-text); cursor: pointer; font-size: 0.88em; }
     .omni-actions button:hover { background: #1f242c; }
     .omni-actions button.primary { background: linear-gradient(180deg, rgba(180,130,60,0.25) 0%, rgba(140,90,30,0.3) 100%); border-color: var(--omni-amber); color: var(--omni-amber); }
+    /* v2.6.7: the "Open gateway" element is now an <a target="_blank"> styled
+       to match a button (display:inline-block, no underline, no color change)
+       — popup blockers could silently kill the old window.open() path. */
+    .omni-gateway-link { display: inline-block; padding: 0.45em 0.9em; border-radius: 5px; border: 1px solid var(--omni-border); background: var(--omni-panel); color: var(--omni-text); cursor: pointer; font-size: 0.88em; text-decoration: none; }
+    .omni-gateway-link:hover { background: #1f242c; }
 
     .omni-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1em; margin-bottom: 1.5em; }
     .omni-card { background: var(--omni-panel); border: 1px solid var(--omni-border); border-radius: 8px; padding: 1em; }
@@ -104,11 +109,18 @@
       </span>
       <span class="omni-pill warn" x-show="cachePill" x-text="cachePill" title="Showing data from the on-disk cache; live refresh failed."></span>
       <div class="omni-actions">
-        <button @click="openGatewayDashboard()"
-                :disabled="!gatewayUrl"
-                :title="gatewayUrl ? `Open the OmniRoute gateway's own web UI at ${gatewayUrl} (providers, combos, API keys, logs). Opens in a new tab.` : 'Gateway URL not available — click Refresh first.'">
+        <!-- v2.6.7: <a target="_blank"> instead of <button> + window.open —
+             window.open was silently blocked by popup blockers/extensions for
+             some users (click, no tab, no error); an anchor navigation is
+             never blocked. Hidden entirely when no URL is derived yet. -->
+        <a class="omni-gateway-link"
+                :href="gatewayUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                x-show="gatewayUrl"
+                :title="`Open the OmniRoute gateway's own web UI at ${gatewayUrl} (providers, combos, API keys, logs). Opens in a new tab.`">
           Open gateway ↗
-        </button>
+        </a>
         <button @click="forceRefresh()" :disabled="busy" :title="busy ? 'Refreshing…' : (pendingIn > 0 ? `Wait ${pendingIn}s` : 'Fetch fresh data from the gateway')">
           <span x-text="refreshLabel">Refresh</span>
         </button>

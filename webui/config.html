@@ -108,8 +108,16 @@
     /* v2.6.6: enlarged, always-enabled "Open gateway" button. Was a small
        greyed-out :disabled button that never worked (the store getter read the
        wrong status field). Now gatewayWebUrl() always resolves (falls back to
-       <browser-host>:8080), so the button is never disabled. */
+       <browser-host>:8080), so the button is never disabled.
+       v2.6.7: the element is now an <a target="_blank"> (not <button> +
+       window.open) because popup blockers (blocker extensions, "block all
+       popups", or a lost user-gesture context) silently killed window.open —
+       click, no tab, no error. A real anchor navigation is never popup-
+       blocked. Styled identically; display:inline-block + no underline so the
+       anchor looks like the original button. */
     .omni-gateway-btn {
+      display: inline-block;
+      text-decoration: none;
       padding: 0.55em 1.4em !important;
       font-size: 1em !important;
       font-weight: 600;
@@ -212,12 +220,23 @@
                enabled: gatewayWebUrl() now falls back to <browser-host>:8080
                when no base_url is configured, so this is never grey. The old
                separate dashboard button is gone — the dashboard content is now
-               inlined directly below (no extra click), per the user's request. -->
-          <button class="omni-gateway-btn"
-                  @click="$store.omnirouteStore.openGateway()"
+               inlined directly below (no extra click), per the user's request.
+               v2.6.7: <a target="_blank"> instead of <button> + window.open
+               — window.open was silently blocked by popup blockers/extensions
+               for some users (click, no tab, no error); an anchor navigation
+               is never blocked. gatewayWebUrl always resolves, so the href is
+               always present. -->
+          <a class="omni-gateway-btn"
+                  :href="$store.omnirouteStore.gatewayWebUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
                   :title="`Open the OmniRoute gateway's own web UI at ${$store.omnirouteStore.gatewayWebUrl} (providers, combos, API keys, logs). Opens in a new tab.`">
             Open gateway ↗
-          </button>
+          </a>
+          <!-- visible freshness marker (desktop app has no devtools; if this
+               does not say v2.6.9 the desktop app is serving a stale cached
+               copy of this page) -->
+          <span class="omni-ver-marker" style="font-size:0.72em; opacity:0.55; margin-left:0.5em;">v2.6.9</span>
         </div>
 
         <!-- ================== INLINE DASHBOARD (v2.6.6) ==================

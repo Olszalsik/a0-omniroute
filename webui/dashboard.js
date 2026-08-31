@@ -44,35 +44,66 @@ const DEBOUNCE_MS = 5000;
 // gateway is published on the Docker host at the default port 8080 and the
 // browser is already on that host), so the "Open gateway" button is never
 // disabled. Mirrors the same fix in omniroute-store.js.
+//
+// v2.6.8: DESKTOP APP support (loopback-alias host), mirroring
+// omniroute-store.js — the A0 Launcher (Electron) silently drops loopback
+// URLs (localhost/127.0.0.1/::1) handed to window.open / shell.openExternal,
+// and its custom a0app:// page origin has no meaningful hostname. The
+// loopback-ALIAS hostname (public wildcard DNS -> 127.0.0.1) rides the
+// launcher's "remote URL" path and opens the USER'S SYSTEM BROWSER, which
+// then reaches the same local gateway on 127.0.0.1. Needs cached/public DNS;
+// offline desktop apps cannot open the gateway UI (launcher policy).
 const DEFAULT_GATEWAY_PORT = "8080";
-function gatewayWebUrl(base_url) {
+const _LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"]);
+const _LOOPBACK_ALIAS_HOST = "localtest.me";
+
+function _isDesktopAppPage() {
+  try {
+    if (typeof window === "undefined" || !window.location) return false;
+    // v2.6.9: the A0 Launcher loads instance WebUIs directly over http, so
+    // the protocol-only a0app:// check missed it — sniff Electron in the
+    // user agent too (keep in sync with omniroute-store.js isDesktopApp).
+    if (/Electron\//.test(navigator.userAgent || "")) return true;
+    return (
+      window.location.protocol !== "http:" &&
+      window.location.protocol !== "https:"
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+function _browserGatewayHost(fallback) {
+  if (typeof window === "undefined" || !window.location) return fallback;
+  const proto = window.location.protocol;
+  if (proto && proto !== "http:" && proto !== "https:") return fallback;
+  return window.location.hostname || fallback;
+}
+
+function _aliasIfNeeded(host, aliasLoopback) {
+  if (aliasLoopback && _LOOPBACK_HOSTS.has(host)) return _LOOPBACK_ALIAS_HOST;
+  return host;
+}
+
+function gatewayWebUrl(base_url, options) {
+  const aliasLoopback = !!options?.loopbackAlias;
   const raw = (base_url || "").trim();
   if (!raw) {
-    const browserHost =
-      (typeof window !== "undefined" && window.location && window.location.hostname) || "localhost";
-    return `http://${browserHost}:${DEFAULT_GATEWAY_PORT}`;
+    const host = _aliasIfNeeded(_browserGatewayHost("localhost"), aliasLoopback);
+    return `http://${host}:${DEFAULT_GATEWAY_PORT}`;
   }
   try {
     const u = new URL(raw);
     let host = u.hostname;
-    if (
-      host === "host.docker.internal" ||
-      host === "localhost" ||
-      host === "127.0.0.1" ||
-      host === "0.0.0.0"
-    ) {
-      host =
-        (typeof window !== "undefined" &&
-          window.location &&
-          window.location.hostname) ||
-        "localhost";
+    if (host === "host.docker.internal" || _LOOPBACK_HOSTS.has(host)) {
+      host = _browserGatewayHost("localhost");
     }
+    host = _aliasIfNeeded(host, aliasLoopback);
     const port = u.port ? ":" + u.port : "";
     return `${u.protocol}//${host}${port}`;
   } catch (e) {
-    const browserHost =
-      (typeof window !== "undefined" && window.location && window.location.hostname) || "localhost";
-    return `http://${browserHost}:${DEFAULT_GATEWAY_PORT}`;
+    const host = _aliasIfNeeded(_browserGatewayHost("localhost"), aliasLoopback);
+    return `http://${host}:${DEFAULT_GATEWAY_PORT}`;
   }
 }
 
@@ -190,8 +221,9 @@ export function omnirouteDashboard() {
     // v2.6.5: browser-reachable URL for the gateway's own web UI, derived
     // from the base_url the dashboard endpoint returned. null until the
     // first successful/failed fetch populates baseUrl.
+    // v2.6.8: desktop app -> loopback-alias host (see gatewayWebUrl above).
     get gatewayUrl() {
-      return gatewayWebUrl(this.baseUrl);
+      return gatewayWebUrl(this.baseUrl, { loopbackAlias: _isDesktopAppPage() });
     },
 
     init() {

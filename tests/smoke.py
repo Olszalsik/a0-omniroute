@@ -2264,12 +2264,31 @@ def test_bottom_button_is_noop_after_v265():
 # ===========================================================================
 def test_config_html_has_open_gateway_button():
     """v2.6.5: the Settings page must wire an 'Open gateway ↗' button to
-    $store.omnirouteStore.openGateway() — the NEW link to the gateway's own
-    web UI at http://<host>:8080 that the removed bottom pill never had.
+    the gateway's own web UI at http://<host>:8080 that the removed bottom
+    pill never had.
+
+    v2.6.7: the element is an <a target="_blank"> bound to
+    :href="$store.omnirouteStore.gatewayWebUrl", NOT a <button> calling
+    openGateway() + window.open(). Reason: popup blockers (blocker
+    extensions, "block all popups" settings, lost user-gesture contexts)
+    silently kill window.open — click, no tab, no error. A real anchor
+    navigation is never popup-blocked. The test pins the anchor contract
+    so the window.open path doesn't creep back.
     """
     src = open(os.path.join(PLUGIN_ROOT, "webui", "config.html"), encoding="utf-8").read()
-    assert "openGateway()" in src, (
-        "config.html must wire a button to $store.omnirouteStore.openGateway()."
+    assert 'target="_blank"' in src and 'class="omni-gateway-btn"' in src, (
+        "config.html must wire 'Open gateway' as an <a class="
+        "'omni-gateway-btn' target=\"_blank\"> anchor (v2.6.7) — window.open "
+        "inside a <button> click handler was silently popup-blocked for some "
+        "users."
+    )
+    assert 'rel="noopener noreferrer"' in src, (
+        "the 'Open gateway' anchor must carry rel='noopener noreferrer'."
+    )
+    assert ":href=\"$store.omnirouteStore.gatewayWebUrl\"" in src, (
+        "the 'Open gateway' anchor's href must bind to "
+        "$store.omnirouteStore.gatewayWebUrl (always resolves, falls back "
+        "to <browser-host>:8080)."
     )
     assert "Open gateway" in src, (
         "config.html must contain an 'Open gateway' button label."
@@ -2319,10 +2338,21 @@ def test_config_html_inlines_dashboard():
 
 def test_dashboard_html_has_open_gateway_button():
     """v2.6.5: the plugin Dashboard modal must wire an 'Open gateway ↗'
-    button to the local openGatewayDashboard() method."""
+    element.
+
+    v2.6.7: it is an <a target="_blank"> bound to :href="gatewayUrl" (never
+    popup-blocked), not a <button> calling openGatewayDashboard() +
+    window.open() — see the config.html test for the full rationale.
+    openGatewayDashboard() stays defined in dashboard.js as the JS fallback."""
     src = open(os.path.join(PLUGIN_ROOT, "webui", "dashboard.html"), encoding="utf-8").read()
-    assert "openGatewayDashboard()" in src, (
-        "dashboard.html must wire a button to openGatewayDashboard()."
+    assert 'class="omni-gateway-link"' in src and 'target="_blank"' in src, (
+        "dashboard.html must wire 'Open gateway' as an <a class="
+        "'omni-gateway-link' target=\"_blank\"> anchor (v2.6.7) — window.open "
+        "inside a <button> click handler was silently popup-blocked for some "
+        "users."
+    )
+    assert ':href="gatewayUrl"' in src, (
+        "the 'Open gateway' anchor's href must bind to the gatewayUrl getter."
     )
     assert "Open gateway" in src, (
         "dashboard.html must contain an 'Open gateway' button label."
@@ -2440,8 +2470,96 @@ def test_gateway_web_url_helper_transforms():
     # v2.6.6: missing/unparseable -> http://<browser-host>:8080 (NEVER null),
     # so the 'Open gateway' button is never disabled/greyed out.
     assert r["empty"] == "http://myhost:8080", r["empty"]
-    assert r["none"] == "http://myhost:8080", r["none"]
-    assert r["garbage"] == "http://myhost:8080", r["garbage"]
+
+
+# v2.6.8: the Agent Zero desktop app (A0 Launcher, Electron) serves UI under
+# a custom scheme (a0app://content/...) and its window-open policy: (a) makes
+# window.location.hostname meaningless ("content"), and (b) SILENTLY DROPS
+# loopback URLs (localhost/127.0.0.1/::1) — so the old "Open gateway" button
+# could never work there. The helper fixes the hostname (falls back to the
+# loopback on non-http(s) origins) and, with opts.loopbackAlias, swaps
+# loopback hosts for the public wildcard-DNS loopback alias `localtest.me`
+# (A record -> 127.0.0.1). The alias hostname is NOT in the launcher's
+# loopback allowlist, so it rides the "remote URL" path, shell.openExternal
+# opens the USER'S SYSTEM BROWSER, and the browser resolves the alias to
+# 127.0.0.1 — the same local gateway.
+_DESKTOP_WINDOW = "{ location: { protocol: 'a0app:', hostname: 'content' } }"
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_gateway_web_url_desktop_app_alias():
+    """v2.6.8: on a custom-scheme page origin (desktop app / a0app://):
+      - window.location.hostname ('content') must NOT leak into the URL
+        (the old bug produced http://content:8080 — unresolvable);
+      - container-side/loopback hosts resolve to the loopback IP;
+      - with opts.loopbackAlias, loopback hosts become http://localtest.me
+        so the A0 Launcher's openExternal path opens the system browser;
+      - without the option the direct loopback URL is returned unchanged;
+      - non-loopback hostnames (a real LAN IP) pass through untouched.
+    """
+    store_path = os.path.join(PLUGIN_ROOT, "webui", "omniroute-store.js").replace("\\", "/")
+    body = f"""
+        const fs = require('fs');
+        let src = fs.readFileSync('{store_path}', 'utf8');
+        src = src.replace(/^\\s*import .+;?\\s*$/gm, '');
+        src = src.replace(/^\\s*export\\s+/gm, '');
+        global.createStore = (name, obj) => obj;
+        global.toastFrontendError = () => {{}};
+        global.toastFrontendSuccess = () => {{}};
+        global.toastFrontendInfo = () => {{}};
+        global.window = {_DESKTOP_WINDOW};
+        const factory = new Function(src + '\\nreturn gatewayWebUrl;');
+        const fn = factory();
+        const out = {{
+          aliasContainer: fn('http://host.docker.internal:8080/v1', {{ loopbackAlias: true }}),
+          aliasEmpty: fn('', {{ loopbackAlias: true }}),
+          aliasLoopback: fn('http://127.0.0.1:9000/v1', {{ loopbackAlias: true }}),
+          noAliasOption: fn('http://host.docker.internal:8080/v1'),
+          lanIpKept: fn('http://192.168.1.7:8080/v1', {{ loopbackAlias: true }}),
+        }};
+        console.log('RESULT ' + JSON.stringify(out));
+        process.exit(0);
+    """
+    rc, out, err = _run_node(body)
+    assert rc == 0, f"node exited {rc}: stderr={err!r}"
+    line = [l for l in out.splitlines() if l.startswith("RESULT ")]
+    assert line, f"no RESULT line in output: {out!r}"
+    r = json.loads(line[0][len("RESULT "):])
+    assert r["aliasContainer"] == "http://localtest.me:8080", (
+        f"desktop app + loopbackAlias -> http://localtest.me:8080 (launcher "
+        f"opens non-loopback hostnames in the system browser), got {r['aliasContainer']!r}"
+    )
+    assert r["aliasEmpty"] == "http://localtest.me:8080", r["aliasEmpty"]
+    assert r["aliasLoopback"] == "http://localtest.me:9000", (
+        f"loopbackAlias keeps the port from base_url (launcher opens the "
+        f"system browser -> alias DNS -> 127.0.0.1:9000), got {r['aliasLoopback']!r}"
+    )
+    assert r["noAliasOption"] == "http://localhost:8080", (
+        f"custom-scheme origin must fall back to a loopback host (never "
+        f"the meaningless 'content'), got {r['noAliasOption']!r}"
+    )
+    assert r["lanIpKept"] == "http://192.168.1.7:8080", (
+        f"a real LAN IP must pass through untouched, got {r['lanIpKept']!r}"
+    )
+
+
+def test_desktop_app_detected_via_electron_ua():
+    """v2.6.9: Launcher >= v1.4 loads instance WebUIs DIRECTLY over http, so
+    the v2.6.8 protocol-only desktop check never fired there and the
+    loopback alias was never applied (regression found live). isDesktopApp /
+    _isDesktopAppPage must ALSO sniff Electron in the user agent."""
+    for relpath, needle in (
+        ("webui/omniroute-store.js", "get isDesktopApp()"),
+        ("webui/dashboard.js", "function _isDesktopAppPage()"),
+    ):
+        src = open(os.path.join(PLUGIN_ROOT, *relpath.split("/")), encoding="utf-8").read()
+        assert "Electron\\/" in src or "Electron/" in src, (
+            f"{relpath}: desktop-app detection does not sniff the Electron "
+            f"user agent. Launcher >= v1.4 serves instance pages over plain "
+            f"http, so without the UA check the loopback alias is never "
+            f"applied and the 'Open gateway' click is silently dropped "
+            f"(launcher policy drops loopback URLs)."
+        )
 
 
 # ===========================================================================

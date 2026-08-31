@@ -17,7 +17,7 @@ import os
 import sys
 
 PLUGIN_NAME = "omniroute"
-EXPECTED_VERSION = "2.6.6"
+EXPECTED_VERSION = "2.6.9"
 
 
 def main() -> int:

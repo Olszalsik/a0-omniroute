@@ -49,44 +49,73 @@ import { toastFrontendError, toastFrontendSuccess, toastFrontendInfo } from "/co
 // existing recoverGateway()/uninstallGateway() duplication. Keep the two
 // copies in sync.
 const DEFAULT_GATEWAY_PORT = "8080";
-export function gatewayWebUrl(base_url) {
+
+// Hostname spellings that all reach the local machine's loopback interface.
+const _LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"]);
+
+// v2.6.8: public wildcard-DNS loopback alias. ``localtest.me`` (and every
+// subdomain of it) has a public A record -> 127.0.0.1, so browsing it on the
+// gateway's port reaches the SAME local gateway as 127.0.0.1:<port> — but as
+// far as URL PARSING goes it is an ordinary internet hostname. This matters
+// for the Agent Zero DESKTOP APP (A0 Launcher, Electron):
+//   * its window-open policy only opens URLs in the system browser when they
+//     pass the "remote instance" check, and that check SILENTLY DROPS local
+//     URLs (hostname in {localhost,127.0.0.1,[::1],::1}) — a link straight to
+//     http://127.0.0.1:8080 can never open there;
+//   * the alias hostname is not in that list, so the launcher treats it as a
+//     remote URL and calls shell.openExternal -> the USER'S SYSTEM BROWSER
+//     opens (per their explicit request), resolves the alias to 127.0.0.1 via
+//     public DNS, and lands on the same local gateway.
+// The alias needs internet access for (cached) DNS; a fully-offline desktop
+// app cannot open the gateway UI at all (launcher policy) — the settings page
+// also displays the direct URL so users can copy it manually.
+const _LOOPBACK_ALIAS_HOST = "localtest.me";
+
+// v2.6.8: hostname the BROWSER should use to reach the gateway. Desktop app
+// pages are served under a custom scheme (``a0app://content/...``) whose
+// "hostname" is a protocol path component, not a resolvable host — the old
+// code blindly used it and produced ``http://content:8080`` (unresolvable —
+// the desktop-app half of the "Open gateway" button did nothing). On any
+// non-http(s) page origin the gateway is reachable at loopback (the gateway
+// is published on the Docker HOST = the machine the desktop app runs on).
+function _browserGatewayHost(fallback) {
+  if (typeof window === "undefined" || !window.location) return fallback;
+  const proto = window.location.protocol;
+  if (proto && proto !== "http:" && proto !== "https:") return fallback;
+  return window.location.hostname || fallback;
+}
+
+function _aliasIfNeeded(host, options) {
+  if (options && options.loopbackAlias && _LOOPBACK_HOSTS.has(host)) {
+    return _LOOPBACK_ALIAS_HOST;
+  }
+  return host;
+}
+
+export function gatewayWebUrl(base_url, options) {
   const raw = (base_url || "").trim();
   // No configured base_url: derive the gateway web URL from the host the
   // browser is already on + the default gateway port. The gateway's web UI
   // is served at the root (http://<host>:8080/ -> 307 -> /dashboard), so
   // landing on the root is correct.
   if (!raw) {
-    const browserHost =
-      (typeof window !== "undefined" &&
-        window.location &&
-        window.location.hostname) ||
-      "localhost";
-    return `http://${browserHost}:${DEFAULT_GATEWAY_PORT}`;
+    const host = _aliasIfNeeded(_browserGatewayHost("localhost"), options);
+    return `http://${host}:${DEFAULT_GATEWAY_PORT}`;
   }
   try {
     const u = new URL(raw);
     let host = u.hostname;
-    if (
-      host === "host.docker.internal" ||
-      host === "localhost" ||
-      host === "127.0.0.1" ||
-      host === "0.0.0.0"
-    ) {
-      host =
-        (typeof window !== "undefined" &&
-          window.location &&
-          window.location.hostname) ||
-        "localhost";
+    if (host === "host.docker.internal" || _LOOPBACK_HOSTS.has(host)) {
+      // Container-side names the browser cannot resolve -> the browsing
+      // machine's own host (or loopback in the desktop app).
+      host = _browserGatewayHost("localhost");
     }
+    host = _aliasIfNeeded(host, options);
     const port = u.port ? ":" + u.port : "";
     return `${u.protocol}//${host}${port}`;
   } catch (e) {
-    const browserHost =
-      (typeof window !== "undefined" &&
-        window.location &&
-        window.location.hostname) ||
-      "localhost";
-    return `http://${browserHost}:${DEFAULT_GATEWAY_PORT}`;
+    const host = _aliasIfNeeded(_browserGatewayHost("localhost"), options);
+    return `http://${host}:${DEFAULT_GATEWAY_PORT}`;
   }
 }
 
@@ -134,6 +163,30 @@ export const store = createStore("omnirouteStore", {
     return "Not installed";
   },
 
+  // ---- v2.6.8: are we running inside the Agent Zero DESKTOP APP? ----
+  // The A0 Launcher (Electron) serves instance UIs over real http(s) when
+  // browsing normally, but its own chrome uses the custom ``a0app://``
+  // scheme. On any non-http(s) page origin the page hostname is meaningless
+  // AND the launcher's window-open policy silently drops loopback URLs — both
+  // of which made the old "Open gateway" button a no-op in the desktop app.
+  get isDesktopApp() {
+    try {
+      if (typeof window === "undefined" || !window.location) return false;
+      // v2.6.9: detect the A0 Launcher (Electron) by user agent as well —
+      // Launcher >= v1.4 loads instance WebUIs DIRECTLY over http
+      // (window.location is a plain http origin), so the old protocol-only
+      // check (``a0app:``) never fired there and the ``localtest.me``
+      // loopback alias was never applied -> button still dropped.
+      if (/Electron\//.test(navigator.userAgent || "")) return true;
+      return (
+        window.location.protocol !== "http:" &&
+        window.location.protocol !== "https:"
+      );
+    } catch (e) {
+      return false;
+    }
+  },
+
   // ---- v2.6.5: gateway web-UI URL (browser-reachable) ----
   // Reads the configured base_url (or the last probed status base_url) and
   // rewrites it to the gateway's own web UI root for the current browser
@@ -146,12 +199,18 @@ export const store = createStore("omnirouteStore", {
   // base_url for the current scope. We now read ``configured_base_url`` too,
   // and the module-level helper falls back to ``<browser-host>:8080`` when no
   // base_url is available anywhere, so the button is never grey.
+  //
+  // v2.6.8: inside the desktop app the URL uses the ``localtest.me``
+  // loopback-ALIAS host (public DNS -> 127.0.0.1): the launcher refuses to
+  // open loopback URLs (silent drop), but opens alias-hostname URLs in the
+  // user's system browser, which then reaches the same local gateway. In a
+  // normal browser the direct loopback/LAN URL is returned unchanged.
   get gatewayWebUrl() {
     const base =
       (this._config && this._config.base_url) ||
       (this.status && (this.status.configured_base_url || this.status.base_url)) ||
       "";
-    return gatewayWebUrl(base);
+    return gatewayWebUrl(base, { loopbackAlias: this.isDesktopApp });
   },
 
   // Open the OmniRoute gateway's own web UI (providers, combos, API keys,

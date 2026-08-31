@@ -234,6 +234,32 @@ A self-contained A0 plugin (id `omniroute`, version `2.5.4`):
     button at the plugin's internal `dashboard.html` — the dashboard content is
     now inlined on the Settings page (invariant #9); the gateway UI is a
     separate page the gateway itself serves on the same host:port as `/v1`.
+    ⚠v2.6.7: the element is an `<a target="_blank" rel="noopener noreferrer">`
+    bound directly to the gateway URL — NOT a `<button>` calling
+    `openGateway()`/`openGatewayDashboard()` + `window.open()`. A synchronous
+    `window.open()` from the click was being silently discarded by popup
+    blockers (extensions / "block all popups" / lost user-gesture contexts):
+    click, no tab, no console error. A real anchor navigation is never
+    popup-blocked. The JS methods remain defined as fallbacks but no page wires
+    them; the smoke tests pin the anchor contract on both pages.
+    ⚠v2.6.8: in the Agent Zero DESKTOP APP this anchor points at the
+    `localtest.me` LOOPBACK-ALIAS host (public DNS -> 127.0.0.1) instead of
+    the loopback IP: the Launcher always denies new windows and silently
+    drops loopback URLs in `openExternalIfSafe`, so a direct 127.0.0.1 URL
+    can never open there; the alias passes the "remote instance" check and
+    opens the user's system browser at the same local gateway. Never resolve
+    the URL from a custom-scheme page origin's `window.location.hostname`
+    (it is `"content"` in the desktop app) — see v2.6.8.
+    ⚠v2.6.9: desktop-app detection is NOT protocol-only. Launcher >= v1.4
+    loads instance WebUIs DIRECTLY over http (the `a0app://` scheme only
+    serves the Launcher's *own* chrome), so on a v1.6.0 install the v2.6.8
+    protocol check (`a0app:`) never fired and the alias was never applied —
+    the button still silently dropped. `isDesktopApp` /
+    `_isDesktopAppPage()` must sniff `/Electron\//` in `navigator.userAgent`
+    too (in addition to the non-http(s) protocol check). Verified live:
+    `example.com` link opens the browser, `127.0.0.1` link is dropped, so
+    the UA sniff on an http origin is the only reliable signal available
+    to page code.
 
 ## Build discipline
 - **Stdlib-only helpers.** `helpers/omniroute_client.py` must not depend on `requests`, `httpx`,
@@ -769,3 +795,148 @@ rename + `^auto/` exclusion), `api/combos.py` (rename + 401 docstring),
 `init`), `webui/dashboard.html` (rename), `README.md` + `AGENTS.md` (rename +
 contract corrections + this section), `tests/smoke.py` (combo tests updated
 for the upsert-by-name flow + rename).
+
+## v2.6.7 — "Open gateway ↗" is now an `<a target="_blank">`, not window.open (2026-08-31)
+
+**Problem.** User report: on the Settings page the "Open gateway ↗" button did
+nothing — click, no tab, no error. The URL derivation was already correct
+(v2.6.6 fix: the gateway is published on the Docker host at `:8080`, and the
+derived `http://<browser-host>:8080` was reachable — verified while debugging:
+`docker ps` shows the gateway published on `0.0.0.0:8080`/`[::]:8080`). The
+remaining way a synchronous `window.open()` from a real click fails *silently*
+with no tab and no error is popup blocking: popup-blocker extensions, a
+"Block all popups" browser setting, or a lost user-gesture context (an
+intermediary `await` between the click and the open, or the Alpine/x-component
+expression evaluation path) all make the browser discard the call without any
+console error.
+
+**Fix.** The button element is now a real anchor navigation, which browsers
+never popup-block:
+
+- `webui/config.html` — `<a class="omni-gateway-btn" :href=
+  "$store.omnirouteStore.gatewayWebUrl" target="_blank" rel="noopener
+  noreferrer">`. `gatewayWebUrl` always resolves (v2.6.6 fallback), so the
+  href is always present. CSS adds `display:inline-block` + `text-decoration:
+  none` so the anchor looks identical to the old button. The `@click` handler
+  and the store `openGateway()` call are gone from the page (the method stays
+  defined in `omniroute-store.js` as a JS fallback and is still covered by
+  `test_store_exposes_gateway_helpers`).
+- `webui/dashboard.html` — same change: `<a class="omni-gateway-link"
+  :href="gatewayUrl" target="_blank" rel="noopener noreferrer" x-show=
+  "gatewayUrl">` styled to match the neighboring buttons (`.omni-gateway-link`).
+  `x-show` (not `:disabled`) because anchors don't support disabled; the
+  anchor only renders once `gatewayUrl` resolves. `openGatewayDashboard()`
+  stays in `dashboard.js` as the JS fallback.
+- `tests/smoke.py` — `test_config_html_has_open_gateway_button` and
+  `test_dashboard_html_has_open_gateway_button` now pin the ANCHOR contract
+  (`target="_blank"` + `rel="noopener noreferrer"` + bound href) so the
+  window.open path doesn't creep back. The store/dashboard.js method tests
+  are unchanged (the JS methods remain).
+
+**Keep in sync.** The anchor is in BOTH `config.html` and `dashboard.html` —
+if one is ever reverted to a `<button>`+`window.open`, both smoke tests fail.
+
+**Files.** `plugin.yaml` (2.6.6 → 2.6.7), `webui/config.html` (anchor + CSS),
+`webui/dashboard.html` (anchor + CSS), `tests/smoke.py` (anchor contract),
+`AGENTS.md` (this section + invariant #21).
+
+## v2.6.8 — desktop app: loopback-alias gateway URL + hostname fix (2026-08-31)
+
+**Problem.** User report (desktop app — the A0 Launcher, Electron, custom
+`a0app://` origin): "Open gateway ↗" still does nothing, AND the plugin
+settings modal took ~1 minute / several clicks to open. Two stacked desktop-
+app bugs, discovered by reading the Launcher's window-open policy
+(`shell/main.js` + `shell/instance_tabs.js`, public repo agent0ai/a0-launcher):
+
+1. **Hostname bug.** On the custom-scheme page origin, `window.location.
+   hostname` is the protocol path component (`"content"`) — the old
+   `gatewayWebUrl` helper produced `http://content:8080`, an unresolvable
+   address. (In a real browser the helper is fine.)
+2. **Launcher policy.** `setWindowOpenHandler` ALWAYS denies new windows:
+   in-tab navigation only happens for SAME-origin URLs, everything else goes
+   to `openExternalIfSafe(url)` — which SILENTLY DROPS loopback URLs (its
+   allowlist check `isAllowedLocalInstanceUrl` matches only
+   localhost/127.0.0.1/[::1]/::1 and returns "not opened"). So no
+   `window.open`/`<a target=_blank>`/anchor can ever open
+   `http://127.0.0.1:8080` in the desktop app — the link is dropped with no
+   error. Embedding is also impossible: the gateway sends
+   `X-Frame-Options: DENY` + `CSP frame-ancestors 'none'`, and it is a
+   Next.js SPA with absolute `/_next` + `/api` paths, so same-origin proxying
+   through A0 would collide with A0's own `/api` namespace.
+
+**Fix.** On a non-http(s) page origin (desktop app), the helper now (a) falls
+back to the LOOPBACK host instead of `"content"`, and (b) with
+`loopbackAlias: true`, swaps every loopback hostname for the public
+wildcard-DNS loopback alias **`localtest.me`** (a public A record →
+`127.0.0.1`). The alias hostname is NOT in the Launcher's loopback allowlist,
+so it passes the "remote instance" check → `shell.openExternal` → **the
+USER'S SYSTEM BROWSER opens**, resolves the alias to 127.0.0.1 via (cached)
+public DNS, and lands on the same local gateway. This matches the user's
+explicit fallback request ("open up my browser instead" — in-app embedding of
+the gateway UI is technically impossible under the launcher policy + gateway
+framing headers).
+
+- `webui/omniroute-store.js` — `_browserGatewayHost(fallback)` (protocol-
+  aware hostname), `_LOOPBACK_HOSTS`, `_LOOPBACK_ALIAS_HOST = "localtest.me"`,
+  `gatewayWebUrl(base_url, { loopbackAlias })` (2nd optional arg, default
+  off → legacy behavior preserved byte-for-byte), `isDesktopApp` getter
+  (page protocol is not http/https), `gatewayWebUrl` getter now passes
+  `{ loopbackAlias: this.isDesktopApp }`.
+- `webui/dashboard.js` — same changes mirrored (its own scope duplicate;
+  invariant #21), `gatewayUrl` getter passes `{ loopbackAlias:
+  _isDesktopAppPage() }`.
+- `tests/smoke.py` — legacy transform harness unchanged (proves default
+  behavior); NEW `test_gateway_web_url_desktop_app_alias` harness with an
+  `a0app://content/` window pins the desktop-app transforms (no `'content'`
+  host leak, alias only with the option, LAN IPs untouched).
+- In a NORMAL browser nothing changes: direct `http://<browser-host>:8080`
+  anchor, new tab.
+
+**Caveats (documented, deliberate).** The alias needs internet DNS for
+`localtest.me` (cached after first lookup). A fully-offline desktop app
+cannot open the gateway UI by ANY in-repo mechanism (launcher drops loopback
+URLs by policy) — the settings page still displays the direct base URL and
+the tooltip shows the exact URL that will open. The alias is surfaced to the
+user in the button tooltip; if they prefer no third-party DNS, the upstream
+fix is in the Launcher (`openExternalIfSafe` dropping loopback URLs) — file
+an issue on agent0ai/a0-launcher if needed.
+
+**Files.** `plugin.yaml` (2.6.7 → 2.6.8), `hooks.py` + `execute.py`
+(EXPECTED_VERSION → 2.6.8), `webui/omniroute-store.js` + `webui/dashboard.js`
+(hostname fix + alias), `tests/smoke.py` (desktop harness), `AGENTS.md`
+(invariant #21 + this section).
+
+## v2.6.9 — desktop app detection: Electron UA sniff (2026-08-31)
+
+**Problem.** v2.6.8 shipped, user restarted container + app, still nothing.
+Live diagnosis via the debug links added to `config.html`: `example.com`
+(target=_blank) opened the system browser, but the gateway link did nothing
+and the tooltip showed `http://127.0.0.1:8080` — i.e. the v2.6.8
+`loopbackAlias` option was never applied. Root cause: **desktop-app
+detection was protocol-only** (`window.location.protocol` not http/https =
+"a0app:"), but the INSTALLED Launcher (v1.6.0) loads instance WebUIs
+DIRECTLY over http — the `a0app://` scheme only serves the Launcher's own
+chrome, not instance pages. Page code cannot distinguish the app webview
+from a normal browser tab by origin.
+
+**Fix.** `isDesktopApp` (omniroute-store.js) / `_isDesktopAppPage()`
+(dashboard.js) additionally sniff `/Electron\//` in `navigator.userAgent` —
+Electron webviews always advertise it, regular browsers never do. The alias
+now fires on the launcher's http origin; clicking still routes through
+`setWindowOpenHandler` → `openExternalIfSafe` → system browser
+(`instance_tabs.js:58 parseHttpUrl` accepts http(s) only, but that filters
+raw strings pre-alias — the alias URL is plain http and passes).
+
+**Also in this release.** `webui/config.html` gained a visible `v2.6.9`
+freshness marker next to the button (the desktop app has no devtools; the
+marker tells stale from fresh in one glance — keep it updated with each
+version). Two TEMP diagnostic links (`debug: open example.com` +
+`debug:<resolved URL>`) were used to bisect where the click died
+(confirmation: example.com opened, loopback URL dropped) and were removed
+after the user confirmed the alias fix works.
+
+**Files.** `webui/omniroute-store.js` + `webui/dashboard.js` (UA sniff),
+`webui/config.html` (marker + debug links), `tests/smoke.py`
+(`test_desktop_app_detected_via_electron_ua`), `plugin.yaml` (2.6.8 →
+2.6.9), `hooks.py` + `execute.py` (EXPECTED_VERSION → 2.6.9), `AGENTS.md`
+(invariant #21 + this section).
