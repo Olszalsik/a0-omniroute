@@ -74,10 +74,9 @@ port) vs. HTTP 4xx/5xx (gateway is up but auth/config wrong).
 The recommended way from inside the A0 container is to ask the user
 to run the PowerShell installer surfaced in the WebUI:
 
-1. Open the A0 WebUI → click the OmniRoute button in the chat-input bar
-   (or visit `/usr/plugins/omniroute/webui/dashboard.html`).
-2. Click the **Settings** button in the dashboard header.
-3. The Settings page has an "Install OmniRoute" section that downloads
+1. Open the A0 WebUI → **Settings → External → OmniRoute** (the
+   plugin's settings page shows the live dashboard inline).
+2. The page has an "Install OmniRoute" section that downloads
    `webui/install-omniroute.ps1` to the host. The user runs it in
    PowerShell.
 
@@ -115,10 +114,6 @@ retry, or check the gateway's own logs.
   OmniRoute on some other port, either change the plugin's
   `base_url` in Settings, or restart OmniRoute on the documented
   mapping.
-- **Windows firewall**: the PowerShell installer adds a firewall
-  rule. If the user started the container manually, port 8080 may
-  still be blocked. The bundled installer handles this; the manual
-  `docker run` does not.
 - **A0 is in Docker, OmniRoute is on the host**: use
   `host.docker.internal:8080` (the plugin's default), NOT `localhost:8080`
   (that would be the container itself, not the host).

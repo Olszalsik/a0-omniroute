@@ -104,7 +104,7 @@ def main() -> int:
         else:
             print(f"[{PLUGIN_NAME}] WARN: OmniRoute not reachable at {base_url}")
             print(f"[{PLUGIN_NAME}]   {health.get('error')}")
-            print(f"[{PLUGIN_NAME}]   Start it with: docker run -d -p 8080:8080 diegosouzapw/omniroute")
+            print(f"[{PLUGIN_NAME}]   Start it with: docker run -d -p 8080:20128 diegosouzapw/omniroute")
             print(f"[{PLUGIN_NAME}]   (or run the PowerShell installer from the WebUI dashboard)")
     except Exception as e:
         print(f"[{PLUGIN_NAME}] WARN: could not import OmniRoute client: {e}")

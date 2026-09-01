@@ -96,15 +96,6 @@ def _empty_response(base_url: str, error: str = "", flt: str = "", tier: str = "
         "tier_counts": {"free": 0, "cheap": 0, "key": 0, "sub": 0},
         "error": error or None,
     }
-    return {
-        "count": 0,
-        "models": [],
-        "filtered": [],
-        "filter": flt,
-        "base_url": base_url,
-        "tier_counts": {"free": 0, "cheap": 0, "key": 0, "sub": 0},
-        "error": error or None,
-    }
 
 
 class Models(ApiHandler):

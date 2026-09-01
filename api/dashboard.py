@@ -37,6 +37,10 @@ from usr.plugins.omniroute.helpers.cache import (  # type: ignore
     read_cache,
     write_cache,
 )
+from usr.plugins.omniroute.helpers.last_known import (  # type: ignore
+    last_known_age_seconds,
+    read_last_known,
+)
 from usr.plugins.omniroute.helpers.omniroute_client import (  # type: ignore
     OmniRouteClient,
     OmniRouteError,
@@ -114,6 +118,20 @@ def _format_cache_for_response(snapshot: Optional[Dict[str, Any]]) -> Optional[D
     return out
 
 
+def _format_last_known_for_response(snapshot: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Add the computed `age_seconds` to a last-known-good snapshot for the UI.
+
+    Mirrors `_format_cache_for_response` for the `last_known` payload
+    (`webui/dashboard.js` reads `d.last_known` to render the
+    "last seen N ago" label when the live gateway is unreachable).
+    """
+    if not snapshot:
+        return None
+    out = dict(snapshot)
+    out["age_seconds"] = last_known_age_seconds(snapshot)
+    return out
+
+
 class Dashboard(ApiHandler):
     """Aggregated dashboard data: status + models with tier classification.
 
@@ -130,6 +148,10 @@ class Dashboard(ApiHandler):
                                      base_url matched)
       cached_snapshot (dict|None)   - the on-disk cache (or None), with an
                                      added age_seconds for the UI pill
+      last_known (dict|None)        - last-known-good snapshot from
+                                     config.json (with age_seconds), surfaced
+                                     when the live gateway is unreachable so
+                                     the UI can show "last seen N ago"
     """
 
     async def process(self, input_data, request):
@@ -191,6 +213,7 @@ class Dashboard(ApiHandler):
                 "models": classified,
                 "from_cache": False,
                 "cached_snapshot": _format_cache_for_response(cached),
+                "last_known": None,
             }
 
         # 4. Live call failed. Fall back to the cache if it exists AND
@@ -215,6 +238,7 @@ class Dashboard(ApiHandler):
                 "models": models,
                 "from_cache": True,
                 "cached_snapshot": _format_cache_for_response(cached),
+                "last_known": _format_last_known_for_response(read_last_known()),
             }
 
         # 5. No live data AND no usable cache — return the original
@@ -230,4 +254,5 @@ class Dashboard(ApiHandler):
             "models": [],
             "from_cache": False,
             "cached_snapshot": None,
+            "last_known": _format_last_known_for_response(read_last_known()),
         }

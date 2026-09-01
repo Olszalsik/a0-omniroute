@@ -59,6 +59,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_ROOT = os.path.dirname(HERE)
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(PLUGIN_ROOT)))
 
+# The tests import plugin modules via the real package path
+# (``usr.plugins.omniroute...``), which only resolves when the repo root is
+# on sys.path. Inside the A0 container the runtime cwd (/a0) provides it;
+# make the suite self-sufficient when run from any other cwd.
+if os.path.isdir(REPO_ROOT) and REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
 # ---------------------------------------------------------------------------
 # Stub HTTP server fixture
 # ---------------------------------------------------------------------------
@@ -2583,6 +2590,7 @@ def test_install_preflight_does_not_raise_when_gateway_down():
     """The pre-flight must warn-log on unreachable, never raise."""
     import asyncio
     import logging
+    from unittest.mock import patch
 
     # Capture log records at WARNING level
     captured = []
@@ -2596,8 +2604,19 @@ def test_install_preflight_does_not_raise_when_gateway_down():
     log.addHandler(_CaptureHandler())
     log.setLevel(logging.DEBUG)
 
-    # gateway is NOT up locally — pre-flight should warn, never raise
-    asyncio.run(hooks.install())
+    # Hermetic: force the probe to report unreachable regardless of whether
+    # a real gateway happens to be running at the default host:port (it is,
+    # on any machine where the user actually uses this plugin). hooks.install()
+    # imports _tcp_probe lazily from the client module, so patch it there.
+    # importlib.import_module (not ``import ... as``) so an earlier fixture
+    # that registered this module via spec_from_file_location doesn't break
+    # the parent-attribute binding on namespace packages.
+    import importlib
+    _client_mod = importlib.import_module(
+        "usr.plugins.omniroute.helpers.omniroute_client"
+    )
+    with patch.object(_client_mod, "_tcp_probe", return_value=False):
+        asyncio.run(hooks.install())
     levels = [r.levelname for r in captured]
     assert "WARNING" in levels, (
         f"install() should log WARNING when gateway unreachable; got {levels}"

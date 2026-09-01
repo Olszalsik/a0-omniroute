@@ -319,7 +319,7 @@ on the settings page. They are also stored in
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `base_url` | `http://localhost:8080/v1` | OmniRoute endpoint. Host port 8080 maps to the container's port 20128 (the upstream image's `ENV PORT`). We use 8080 on the host because 20128 is commonly blocked on Windows dev machines. |
+| `base_url` | `http://host.docker.internal:8080/v1` | OmniRoute endpoint, as seen from inside the A0 container. Host port 8080 maps to the container's port 20128 (the upstream image's `ENV PORT`). We use 8080 on the host because 20128 is commonly blocked on Windows dev machines. |
 | `api_key` | `""` | Bearer token. Only set if you enabled `OMNIROUTE_API_KEY` on the server. Empty by default = unauthenticated local mode. |
 | `default_model` | `auto` | `auto` = let OmniRoute pick via tier-fallback. Or pin a specific model id (e.g. `openai/gpt-4o`, `anthropic/claude-3.5-sonnet`, `auto/coding:free`). |
 | `timeout_seconds` | `60` | Per-request HTTP timeout. |

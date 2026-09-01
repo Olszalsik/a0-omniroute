@@ -40,8 +40,8 @@ PLUGIN_NAME = "omniroute"
 # skip the gateway call for _COOLDOWN_SECONDS and surface the on-disk
 # `last_known` snapshot instead. Prevents a downed gateway from tying up
 # a worker for the full `timeout_seconds` (default 60s) on every poll.
-# Window matches the client's POLL_MS in chat-input-bottom-actions-end/
-# omniroute-button.html so the badge recovers within one poll cycle.
+# The WebUI status badge (page-head extension) re-polls this endpoint on
+# its own cadence, so a 60s window keeps badge recovery within one cycle.
 _COOLDOWN_SECONDS = 60
 _LAST_FAIL: dict[str, float] = {}
 _log = logging.getLogger(__name__)
